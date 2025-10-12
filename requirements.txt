@@ -1,0 +1,8 @@
+xarray
+geopandas
+regionmask
+regionmask
+geopandas
+xarray
+pandas
+tqdm
