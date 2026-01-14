@@ -51,11 +51,11 @@ class RegionalTileServer:
         self.pyramids[cache_key] = pyramid_data
         self.data_bounds = pyramid_data['data_bounds']
         
-        print("\n" + "="*60)        
-        print(f"Loaded pyramid: {cache_key}, \n"
-              f"zoom levels: {list(pyramid_data['pyramid'].keys())}, \n"
-              f"bounds: {pyramid_data['data_bounds']}" )
-        print("="*60 + "\n")
+        # print("="*60)        
+        # print(f"Loaded pyramid: {cache_key}, \n"
+        #       f"zoom levels: {list(pyramid_data['pyramid'].keys())}, \n"
+        #       f"bounds: {pyramid_data['data_bounds']}" )
+        # print("="*60)
         
         return pyramid_data
     
@@ -205,6 +205,8 @@ class RegionalTileServer:
         # Create a mask for NaN values before applying colormap
         nan_mask = np.isnan(data)
 
+        print(f"  NaN mask shape: {nan_mask.shape}, NaN count: {nan_mask.sum()}")
+
         # Replace NaN with vmin temporarily (will be made transparent later)
         data_filled = np.where(nan_mask, vmin, data)
 
@@ -219,10 +221,21 @@ class RegionalTileServer:
         rgba = cmap(norm(data_filled))
         rgba_uint8 = (rgba * 255).astype(np.uint8)
 
+        print(f"  RGBA shape: {rgba_uint8.shape}")
+
         # Make NaN values completely transparent
         rgba_uint8[nan_mask] = np.array([0, 0, 0, 0], dtype=np.uint8)
 
-        return Image.fromarray(rgba_uint8, mode='RGBA')
+        # Verify transparency was applied
+        transparent_count = (rgba_uint8[:, :, 3] == 0).sum()
+        print(f"  Transparent pixels: {transparent_count} (should be {nan_mask.sum()})")
+
+        img = Image.fromarray(rgba_uint8, mode='RGBA')
+
+        # Verify the image mode
+        print(f"  Image mode: {img.mode}, size: {img.size}")
+
+        return img
 
 
 # Global server instance
@@ -246,16 +259,30 @@ def get_tile(variable, time_idx, category, z, x, y):
     profile = request.args.get('profile', 0, type=int)
     use_cache = request.args.get('cache', 'true').lower() == 'true'
     mode = request.args.get('mode', 'regional')  # 'regional' or 'global'
+    tms = request.args.get('tms', 'false').lower() == 'true'  # TMS vs XYZ coordinates
 
-    # Check cache
-    cache_key = f"{variable}_{time_idx}_{category}_{z}_{x}_{y}_{colormap}_{vmin}_{vmax}_{profile}_{mode}"
+    print(f"Tile request {z}/{x}/{y}: vmin={vmin}, vmax={vmax}, mode={mode}, tms={tms}")
+
+    # Build cache key BEFORE any coordinate conversion
+    cache_key = f"{variable}_{time_idx}_{category}_{z}_{x}_{y}_{colormap}_{vmin}_{vmax}_{profile}_{mode}_{tms}"
     cache_hash = hashlib.md5(cache_key.encode()).hexdigest()
 
+    # Convert XYZ to TMS if needed (for global mode)
+    if mode == 'global' and not tms:
+        # XYZ: Y=0 at north, need to flip to TMS (Y=0 at south)
+        n_tiles = 2 ** z
+        y = (n_tiles - 1) - y
+        print(f"  Converted XYZ to TMS: y_new={y}")
+
     if use_cache and cache_hash in TILE_IMAGE_CACHE:
-        return send_file(
+        response = send_file(
             BytesIO(TILE_IMAGE_CACHE[cache_hash]),
             mimetype='image/png'
         )
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+        return response
 
     try:
         # Load pyramid
@@ -282,7 +309,11 @@ def get_tile(variable, time_idx, category, z, x, y):
             image = Image.new('RGBA', (TILE_SIZE, TILE_SIZE), (0, 0, 0, 0))
             img_io = BytesIO()
             image.save(img_io, 'PNG', optimize=True)
-            return send_file(BytesIO(img_io.getvalue()), mimetype='image/png')
+            response = send_file(BytesIO(img_io.getvalue()), mimetype='image/png')
+            response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+            response.headers['Pragma'] = 'no-cache'
+            response.headers['Expires'] = '0'
+            return response
 
         lon, lat = grids
 
@@ -297,8 +328,10 @@ def get_tile(variable, time_idx, category, z, x, y):
         image = tile_server.create_colormap_image(tile_data, colormap, vmin, vmax)
         
         # Save to bytes
+        # Ensure proper alpha channel in PNG
         img_io = BytesIO()
-        image.save(img_io, 'PNG', optimize=True)
+        # Save with explicit alpha channel metadata
+        image.save(img_io, 'PNG', optimize=False, compress_level=6)
         img_bytes = img_io.getvalue()
         
         # Cache
@@ -310,8 +343,18 @@ def get_tile(variable, time_idx, category, z, x, y):
                 for _ in range(100):
                     TILE_IMAGE_CACHE.pop(next(iter(TILE_IMAGE_CACHE)))
         
-        return send_file(BytesIO(img_bytes), mimetype='image/png')
-        
+        response = send_file(BytesIO(img_bytes), mimetype='image/png')
+        # Prevent browser caching to ensure transparency updates are visible
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+        # Enable CORS for cross-origin requests
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'GET'
+        # Explicitly set content type with alpha channel info
+        response.headers['Content-Type'] = 'image/png'
+        return response
+
     except Exception as e:
         print(f"Tile generation error: {e}")
         import traceback
@@ -360,6 +403,47 @@ def pyramid_info(variable):
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/test/save_tile/<variable>/<int:time_idx>/<int:category>/<int:z>/<int:x>/<int:y>')
+def save_test_tile(variable, time_idx, category, z, x, y):
+    """Save a test tile to disk to verify transparency"""
+    colormap = request.args.get('colormap', 'Reds')
+    vmin = request.args.get('vmin', type=float)
+    vmax = request.args.get('vmax', type=float)
+    profile = request.args.get('profile', 0, type=int)
+    mode = request.args.get('mode', 'global')
+
+    try:
+        pyramid_data = tile_server.load_pyramid(variable, profile)
+        pyramid = pyramid_data['pyramid']
+
+        if z not in pyramid:
+            available_zooms = sorted(pyramid.keys())
+            z_actual = min(available_zooms, key=lambda k: abs(k - z))
+        else:
+            z_actual = z
+
+        data = pyramid[z_actual]
+        data_slice = data.isel(time=time_idx, category=category)
+
+        grids = tile_server.get_tile_lonlat_grids(z, x, y, TILE_SIZE, mode=mode)
+
+        if grids is None:
+            return "Tile outside data bounds", 404
+
+        lon, lat = grids
+        tile_data = tile_server.get_tile_data(data_slice, lon, lat)
+        image = tile_server.create_colormap_image(tile_data, colormap, vmin, vmax)
+
+        # Save to disk
+        output_path = f'test_tile_{z}_{x}_{y}.png'
+        image.save(output_path, 'PNG')
+
+        return f"Saved to {output_path}. Open it to verify transparency."
+
+    except Exception as e:
+        return str(e), 500
 
 
 @app.route('/cache/clear')
