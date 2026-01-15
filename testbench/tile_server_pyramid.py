@@ -224,7 +224,8 @@ class RegionalTileServer:
         print(f"  RGBA shape: {rgba_uint8.shape}")
 
         # Make NaN values completely transparent
-        rgba_uint8[nan_mask] = np.array([0, 0, 0, 0], dtype=np.uint8)
+        # Set all channels to 0 for fully transparent pixels
+        rgba_uint8[nan_mask, :] = 0
 
         # Verify transparency was applied
         transparent_count = (rgba_uint8[:, :, 3] == 0).sum()
@@ -235,7 +236,23 @@ class RegionalTileServer:
         # Verify the image mode
         print(f"  Image mode: {img.mode}, size: {img.size}")
 
-        return img
+        # Convert to palette mode with transparency (like WMS)
+        # This ensures browser compatibility
+        # First, create an alpha mask
+        alpha = img.split()[3]  # Get alpha channel
+
+        # Convert RGB to palette mode
+        img_rgb = img.convert('RGB')
+        img_p = img_rgb.convert('P', palette=Image.ADAPTIVE, colors=255)
+
+        # Add transparency for pixels that were fully transparent
+        # Find a color index to use for transparent pixels (use index 0)
+        img_p.paste(0, mask=Image.eval(alpha, lambda a: 255 if a == 0 else 0))
+        img_p.info['transparency'] = 0
+
+        print(f"  Converted to palette mode with transparency index")
+
+        return img_p
 
 
 # Global server instance
@@ -327,11 +344,16 @@ def get_tile(variable, time_idx, category, z, x, y):
         # Create image
         image = tile_server.create_colormap_image(tile_data, colormap, vmin, vmax)
         
-        # Save to bytes
-        # Ensure proper alpha channel in PNG
+        # Save to bytes with proper alpha channel
         img_io = BytesIO()
-        # Save with explicit alpha channel metadata
-        image.save(img_io, 'PNG', optimize=False, compress_level=6)
+
+        # Add PNG metadata to explicitly mark alpha channel
+        from PIL import PngImagePlugin
+        pnginfo = PngImagePlugin.PngInfo()
+        pnginfo.add_text("Software", "HydroViewer Tile Server")
+
+        # Save with explicit RGBA mode and metadata
+        image.save(img_io, 'PNG', pnginfo=pnginfo, optimize=True)
         img_bytes = img_io.getvalue()
         
         # Cache
