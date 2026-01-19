@@ -421,6 +421,5 @@ FodyWeavers.xsd
 # Ignore Pickle tmp files
 */tmp
 .DS_Store
-*.pkl
 scrutinize.ipynb
 get_deterministic_climatology
