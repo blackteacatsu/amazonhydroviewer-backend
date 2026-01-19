@@ -14,14 +14,19 @@ import pickle
 from pathlib import Path
 import hashlib
 import xarray as xr
+import requests
+import io
+from urllib.parse import urljoin
 #import shared
+
 
 app = Flask(__name__)
 CORS(app)
 
 # Configuration
 TILE_SIZE = 256
-PYRAMID_DIR = Path('testbench/data/pyramids')
+#PYRAMID_DIR = Path('get_ldas_probabilistic_output/subsampled')
+PYRAMID_DIR = 'https://raw.githubusercontent.com/Amazon-ARCHive/amazon_hydroviewer_backend/'
 PYRAMID_CACHE = {}  # Cache loaded pyramids
 TILE_IMAGE_CACHE = {}  # Cache rendered tiles
 
@@ -34,22 +39,20 @@ class RegionalTileServer:
         self.data_bounds = None
     
     def load_pyramid(self, variable, profile=0):
-        """Load pyramid from disk"""
-        cache_key = f"{variable}_lvl_{profile}"
+        # """Load pyramid from disk"""
+        # cache_key = f"{variable}_lvl_{profile}"
         
-        if cache_key in self.pyramids:
-            return self.pyramids[cache_key]
+        # if cache_key in self.pyramids:
+        #     return self.pyramids[cache_key]
         
-        pyramid_file = PYRAMID_DIR / f"pyramid_{variable}_lvl_{profile}.pkl"
+        # if not pyramid_file.exists():
+        #     raise FileNotFoundError(f"Pyramid not found: {pyramid_file}")
         
-        if not pyramid_file.exists():
-            raise FileNotFoundError(f"Pyramid not found: {pyramid_file}")
+        # with open(pyramid_file, 'rb') as f:
+        #     pyramid_data = pickle.load(f)
         
-        with open(pyramid_file, 'rb') as f:
-            pyramid_data = pickle.load(f)
-        
-        self.pyramids[cache_key] = pyramid_data
-        self.data_bounds = pyramid_data['data_bounds']
+        # self.pyramids[cache_key] = pyramid_data
+        # self.data_bounds = pyramid_data['data_bounds']
         
         # print("="*60)        
         # print(f"Loaded pyramid: {cache_key}, \n"
@@ -57,7 +60,31 @@ class RegionalTileServer:
         #       f"bounds: {pyramid_data['data_bounds']}" )
         # print("="*60)
         
-        return pyramid_data
+        """Load pyramid from remote"""
+        cache_key = f"{variable}_lvl_{profile}"
+        if cache_key in self.pyramids:
+            return self.pyramids[cache_key]
+        
+        filename = f"prob_2024_dec_tercile_probability_max_{variable}_lvl_{profile}_subsampled.pkl"
+        url = urljoin(PYRAMID_DIR, f"refs/heads/main/get_ldas_probabilistic_output/subsampled/{filename}")
+
+        try:
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            pyramid_data = pickle.load(io.BytesIO(response.content))
+            self.pyramids[cache_key] = pyramid_data
+            self.data_bounds = pyramid_data['data_bounds']
+            return pyramid_data
+
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                raise FileNotFoundError(
+                    f"Pyramid not found at remote URL: {url}\n"
+                    f"Ensure pyramid files are uploaded to the GitHub repository"
+                )
+            raise RuntimeError(f"Failed to fetch pyramid from {url}: {e}")
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(f"Network error fetching pyramid from {url}: {e}")
     
     def tile_to_lonlat_bounds(self, zoom, x, y):
         """
