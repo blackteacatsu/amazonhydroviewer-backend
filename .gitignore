@@ -418,8 +418,9 @@ FodyWeavers.xsd
 *.msm
 *.msp
 
-# Ignore Pickle tmp files
+# Ignore test and tmp files
 */tmp
+*/testbench
 .DS_Store
 scrutinize.ipynb
 get_deterministic_climatology
