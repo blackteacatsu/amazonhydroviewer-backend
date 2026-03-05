@@ -279,63 +279,28 @@ def subsample_data_preserve_mask(data, grain):
     if grain == 1:
         return data
     
-    # Calculate starting indices (centered sampling)
+    # Centered sampling offset, matching legacy behavior.
     lat_start = int(np.ceil(grain / 2) - 1)
     lon_start = int(np.ceil(grain / 2) - 1)
-    
-    # Create output array
-    new_shape = (
-        len(data.time),
-        len(data.category),
-        len(range(lat_start, len(data.lat), grain)),
-        len(range(lon_start, len(data.lon), grain))
-    )
-    
-    output = np.full(new_shape, np.nan)
-    
-    # Get subsampled coordinates
-    new_lat = data.lat.values[lat_start::grain]
-    new_lon = data.lon.values[lon_start::grain]
-    
-    # Process each time and category
-    for t in range(len(data.time)):
-        for c in range(len(data.category)):
-            slice_2d = data.isel(time=t, category=c).values
-            
-            # Reshape into grain x grain blocks and compute nanmean
-            new_lat_idx = 0
-            for i in range(lat_start, len(data.lat), grain):
-                new_lon_idx = 0
-                for j in range(lon_start, len(data.lon), grain):
-                    # Extract grain x grain window
-                    window = slice_2d[
-                        max(0, i - grain//2):min(len(data.lat), i + grain//2 + 1),
-                        max(0, j - grain//2):min(len(data.lon), j + grain//2 + 1)
-                    ]
-                    
-                    # Only compute mean if there are valid values
-                    valid_count = np.sum(~np.isnan(window))
-                    
-                    if valid_count > 0:
-                        # Require at least 25% valid data in window
-                        if valid_count >= (grain * grain * 0.25):
-                            output[t, c, new_lat_idx, new_lon_idx] = np.nanmean(window)
-                    
-                    new_lon_idx += 1
-                new_lat_idx += 1
-    
-    # Create new xarray DataArray
-    subsampled = xr.DataArray(
-        output,
-        coords={
-            'time': data.time.values,
-            'category': data.category.values,
-            'lat': new_lat,
-            'lon': new_lon
-        },
-        dims=['time', 'category', 'lat', 'lon']
-    )
-    
+
+    shifted = data.isel(lat=slice(lat_start, None), lon=slice(lon_start, None))
+
+    # Vectorized block reduction: much faster than Python loops.
+    reduced = shifted.coarsen(lat=grain, lon=grain, boundary="trim")
+    mean = reduced.mean(skipna=True)
+    valid_count = shifted.notnull().coarsen(lat=grain, lon=grain, boundary="trim").sum()
+
+    # Keep cells with at least 25% valid members.
+    threshold = grain * grain * 0.25
+    subsampled = mean.where(valid_count >= threshold)
+
+    # Keep representative coordinates consistent with centered sampling.
+    nlat = subsampled.sizes["lat"]
+    nlon = subsampled.sizes["lon"]
+    new_lat = data.lat.values[lat_start:lat_start + nlat * grain:grain]
+    new_lon = data.lon.values[lon_start:lon_start + nlon * grain:grain]
+    subsampled = subsampled.assign_coords(lat=new_lat, lon=new_lon)
+
     return subsampled
 
 def save_pyramid_npz(subsampled_output_dir: Path, 
