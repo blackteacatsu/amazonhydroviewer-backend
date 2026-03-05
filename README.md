@@ -73,7 +73,7 @@ amazon_hydroviewer_backend/
 
 ## Usage
 
-### Computing Zonal Averages
+### Computing Zonal Averages [This current version removes this]
 
 The [get_zonal_average.py](get_zonal_average.py) script processes NetCDF forecast files and computes zonal statistics for each HydroBASINS polygon:
 
