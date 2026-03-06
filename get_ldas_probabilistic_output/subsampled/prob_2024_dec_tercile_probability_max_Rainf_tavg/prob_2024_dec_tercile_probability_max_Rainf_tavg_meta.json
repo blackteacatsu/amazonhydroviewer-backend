@@ -1,0 +1,36 @@
+{
+  "stem": "prob_2024_dec_tercile_probability_max_Rainf_tavg",
+  "zooms": [
+    4,
+    5,
+    6,
+    7,
+    8,
+    9
+  ],
+  "dtype": "float32",
+  "files": {
+    "4": "prob_2024_dec_tercile_probability_max_Rainf_tavg_z4.npz",
+    "5": "prob_2024_dec_tercile_probability_max_Rainf_tavg_z5.npz",
+    "6": "prob_2024_dec_tercile_probability_max_Rainf_tavg_z6.npz",
+    "7": "prob_2024_dec_tercile_probability_max_Rainf_tavg_z7.npz",
+    "8": "prob_2024_dec_tercile_probability_max_Rainf_tavg_z8.npz",
+    "9": "prob_2024_dec_tercile_probability_max_Rainf_tavg_z9.npz"
+  },
+  "grain_map": {
+    "4": 2,
+    "5": 1,
+    "6": 1,
+    "7": 1,
+    "8": 1,
+    "9": 1
+  },
+  "data_bounds": {
+    "lon_min": -81.975,
+    "lon_max": -49.025,
+    "lat_min": -20.975,
+    "lat_max": 5.975
+  },
+  "time_len": 6,
+  "category_len": 3
+}
