@@ -304,45 +304,70 @@ def subsample_data_preserve_mask(data, grain):
     return subsampled
 
 def save_pyramid_npz(subsampled_output_dir: Path, 
-                     nc_file: Path, 
+                     cache_path: Path, 
                      pyramid: dict, 
                      grain_map: dict, 
                      data_bounds: dict):
-    stem = nc_file.stem  # e.g. prob_2024_dec_..._lvl_0
+    stem = cache_path.stem  # e.g. prob_2024_dec_...
     out_dir = subsampled_output_dir / stem
     out_dir.mkdir(parents=True, exist_ok=True)
 
     zooms = sorted(pyramid.keys())
 
     # coords shared (time/category) — assume consistent across zooms
-    z0 = zooms[0]
-    da0 = pyramid[z0]
+    da0 = pyramid[zooms[0]]
     time = da0["time"].values
     category = da0["category"].values
+    profile_dims = [d for d in da0.dims if 'profile' in d.lower()]
+    profile_dim = profile_dims[0] if profile_dims else None
+
     meta = {
         "stem": stem,
         "zooms": zooms,
         "dtype": "float32",
-        "files": {str(z): f"{stem}_z{z}.npz" for z in zooms},
+        "files": f"{stem}_pyramid.npz",
         "grain_map": {str(z): int(grain_map[z]) for z in zooms},
         "data_bounds": data_bounds,
         "time_len": int(time.shape[0]),
         "category_len": int(category.shape[0]),
+        "profile_dim": profile_dim
     }
+
+    arrays = {
+        "time": time,
+        "category": category,
+    }
+
+    if profile_dim is not None:
+        lvl_idxs = da0[profile_dim].values
+        arrays["profile_depth"] = lvl_idxs.astype(np.float32) if np.issubdtype(lvl_idxs.dtype, np.number) else None
+        meta["profile_length"] = int(lvl_idxs.shape[0])
 
     # Write per-zoom compressed arrays
     for z in zooms:
         da = pyramid[z]
 
-        np.savez_compressed(
-            out_dir / meta["files"][str(z)],
-            values=da.values.astype(np.float32),  # (time, category, lat, lon)
-            lat=da["lat"].values.astype(np.float32),
-            lon=da["lon"].values.astype(np.float32),
-            time=time,          # datetime64 ok in npz
-            category=category,  # small
-            grain=np.array([grain_map[z]], dtype=np.int16),
-        )
+        arrays[f"z{z}_values"] = da.values.astype(np.float32)
+        arrays[f"z{z}_lat"] = da["lat"].values.astype(np.float32)
+        arrays[f"z{z}_lon"] = da["lon"].values.astype(np.float32)
+        arrays[f"z{z}_grain"] = np.array([grain_map[z]], dtype=np.int16)
+
+        if profile_dim:
+            # compact spatial-mean profile: (time, category, depth)
+            profile = da.mean(dim=("lat", "lon"), skipna=True).values.astype(np.float32)
+            arrays[f"z{z}_profile_mean"] = profile
+
+        # np.savez_compressed(
+        #     out_dir / meta["files"][str(z)],
+        #     values=da.values.astype(np.float32),  # (time, category, lat, lon)
+        #     lat=da["lat"].values.astype(np.float32),
+        #     lon=da["lon"].values.astype(np.float32),
+        #     time=time,          # datetime64 ok in npz
+        #     category=category,  # small
+        #     grain=np.array([grain_map[z]], dtype=np.int16),
+        # )
+
+    np.savez_compressed(out_dir / f"{stem}_pyramid.npz", **arrays)
 
     # Write small metadata json
     (out_dir / f"{stem}_meta.json").write_text(json.dumps(meta, indent=2))

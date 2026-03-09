@@ -227,9 +227,13 @@ def split_forecast_and_hindcasts(
     forecast_dt = items[-1][0]
 
     # Hindcasts = existing Dec-01 files from earlier years only
+    # hindcasts = [
+    #     p for (dt, _, _, p) in items
+    #     if dt.year < forecast_dt.year and dt.month == 12 and dt.day == 1
+    # ]
     hindcasts = [
         p for (dt, _, _, p) in items
-        if dt.year < forecast_dt.year and dt.month == 12 and dt.day == 1
+        if dt.year < 2021 and dt.month == forecast_dt.month and dt.day == 1
     ]
     # Sort hindcasts by year ascending (oldest → newest)
     hindcasts.sort(key=lambda p: _parse_date_from_name(p.name))
