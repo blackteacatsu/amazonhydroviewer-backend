@@ -98,16 +98,6 @@ class RegionalTileServer:
             self._stem_cache[cache_key] = variable
             return variable
 
-        index = self.load_index()
-        init_date = index.get("initialization_date")
-        if init_date:
-            if level is not None and "_lvl_" not in variable:
-                remote_stem = f"{init_date}_tercile_prob_max_{variable}_lvl_{level}"
-            else:
-                remote_stem = f"{init_date}_tercile_prob_max_{variable}"
-            self._stem_cache[cache_key] = remote_stem
-            return remote_stem
-
         if not self._is_remote():
             base = Path(PYRAMID_DIR)
             if not base.exists():
@@ -131,6 +121,16 @@ class RegionalTileServer:
             if matches:
                 self._stem_cache[cache_key] = matches[0]
                 return matches[0]
+
+        index = self.load_index()
+        init_date = index.get("initialization_date")
+        if init_date:
+            if level is not None and "_lvl_" not in variable:
+                remote_stem = f"{init_date}_tercile_prob_max_{variable}_lvl_{level}"
+            else:
+                remote_stem = f"{init_date}_tercile_prob_max_{variable}"
+            self._stem_cache[cache_key] = remote_stem
+            return remote_stem
 
         raise FileNotFoundError(
             f"Could not resolve pyramid stem for variable '{variable}' in {PYRAMID_DIR}"
