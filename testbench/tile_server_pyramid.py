@@ -59,7 +59,6 @@ class RegionalTileServer:
         #       f"zoom levels: {list(pyramid_data['pyramid'].keys())}, \n"
         #       f"bounds: {pyramid_data['data_bounds']}" )
         # print("="*60)
-        
         """Load pyramid from remote"""
         cache_key = f"{variable}_lvl_{profile}"
         if cache_key in self.pyramids:
