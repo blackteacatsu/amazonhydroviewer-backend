@@ -30,7 +30,7 @@ PYRAMID_DIR = os.path.join(BACKEND_DIR, 'get_ldas_probabilistic_output', 'subsam
 TILE_IMAGE_CACHE = {}  # Cache rendered tiles
 API_VERSION = "2026-02-08"
 MAX_META_CACHE = 1
-MAX_TILE_CACHE = 20
+MAX_TILE_CACHE = 50
 
 class RegionalTileServer:
     """Serves tiles from pyramids using regional coordinates"""
@@ -629,12 +629,12 @@ def get_tile(variable, time_input, category, z, x, y):
         img_io = BytesIO()
 
         # Add PNG metadata to explicitly mark alpha channel
-        from PIL import PngImagePlugin
-        pnginfo = PngImagePlugin.PngInfo()
-        pnginfo.add_text("Software", "HydroViewer Tile Server")
+        # from PIL import PngImagePlugin
+        # pnginfo = PngImagePlugin.PngInfo()
+        # pnginfo.add_text("Software", "HydroViewer Tile Server")
 
         # Save with explicit RGBA mode and metadata
-        image.save(img_io, 'PNG', pnginfo=pnginfo, optimize=True)
+        image.save(img_io, 'PNG') # pnginfo=pnginfo, optimize=True
         img_bytes = img_io.getvalue()
         
         # Cache
