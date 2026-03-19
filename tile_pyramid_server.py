@@ -182,7 +182,42 @@ class RegionalTileServer:
         npz_ref = self._join_ref(base, npz_name)
         return self._open_npz_ref(npz_ref)
 
-    def get_level_slice(self, variable: str, z: int, time_idx: int, category_idx: int, profile_idx: int = 0, level: int = None):
+    def _resolve_time_idx(self, time_input, time_values):
+        """Resolve time selector (index or ISO date/time string) to integer index."""
+        if isinstance(time_input, (int, np.integer)):
+            return int(time_input)
+
+        time_text = str(time_input).strip().strip("'\"")
+        if time_text.lstrip("-").isdigit():
+            return int(time_text)
+
+        time_strings = []
+        for t in time_values:
+            if isinstance(t, np.datetime64):
+                time_strings.append(np.datetime_as_string(t, unit='s'))
+            else:
+                time_strings.append(str(t))
+
+        # First try exact timestamp match
+        if time_text in time_strings:
+            return time_strings.index(time_text)
+
+        # Then allow date-only match (YYYY-MM-DD)
+        date_text = time_text[:10]
+        matching = [i for i, value in enumerate(time_strings) if str(value)[:10] == date_text]
+        if len(matching) == 1:
+            return matching[0]
+        if len(matching) > 1:
+            raise ValueError(
+                f"Ambiguous time input '{time_input}' matched multiple timestamps for date '{date_text}'"
+            )
+
+        available_dates = sorted({str(v)[:10] for v in time_strings})
+        raise ValueError(
+            f"Unknown time input '{time_input}'. Available dates: {available_dates}"
+        )
+
+    def get_level_slice(self, variable: str, z: int, time_input, category_idx: int, profile_idx: int = 0, level: int = None):
         """Return one 2D slice (lat, lon) for a given zoom/time/category/profile."""
         meta = self.load_pyramid_meta(variable, level)
         bundle = self.load_pyramid_bundle(variable, z, level)
@@ -203,6 +238,7 @@ class RegionalTileServer:
             time = bundle["time"]
             category = bundle["category"]
             profile_dim = meta.get('profile_dim')
+            time_idx = self._resolve_time_idx(time_input, time)
 
             if time_idx < 0 or time_idx >= len(time):
                 raise IndexError(f"time_idx out of range: {time_idx} (0..{len(time)-1})")
@@ -511,8 +547,8 @@ class RegionalTileServer:
 tile_server = RegionalTileServer()
 
 
-@app.route('/tiles/<variable>/<int:time_idx>/<int:category>/<int:z>/<int:x>/<int:y>.png')
-def get_tile(variable, time_idx, category, z, x, y):
+@app.route('/tiles/<variable>/<time_input>/<int:category>/<int:z>/<int:x>/<int:y>.png')
+def get_tile(variable, time_input, category, z, x, y):
     """
     Serve a tile
     
@@ -532,7 +568,7 @@ def get_tile(variable, time_idx, category, z, x, y):
     print(f"Tile request {z}/{x}/{y}: vmin={vmin}, vmax={vmax}, mode={mode}, tms={tms}")
 
     # Build cache key BEFORE any coordinate conversion
-    cache_key = f"{variable}_{time_idx}_{category}_{z}_{x}_{y}_{colormap}_{vmin}_{vmax}_{profile}_{mode}_{tms}"
+    cache_key = f"{variable}_{time_input}_{category}_{z}_{x}_{y}_{colormap}_{vmin}_{vmax}_{profile}_{mode}_{tms}"
     cache_hash = hashlib.md5(cache_key.encode()).hexdigest()
 
     # Convert XYZ to TMS if needed (for global mode)
@@ -560,7 +596,7 @@ def get_tile(variable, time_idx, category, z, x, y):
         # Resolve nearest available zoom and load one 2D source slice
         z_actual = tile_server.get_best_zoom(variable, z, profile)
         values_2d, src_lat, src_lon = tile_server.get_level_slice(
-            variable, z_actual, time_idx, category, profile, profile
+            variable, z_actual, time_input, category, profile, profile
         )
 
         # Get tile coordinate grids
@@ -723,8 +759,8 @@ def pyramid_time(variable):
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/test/save_tile/<variable>/<int:time_idx>/<int:category>/<int:z>/<int:x>/<int:y>')
-def save_test_tile(variable, time_idx, category, z, x, y):
+@app.route('/test/save_tile/<variable>/<time_input>/<int:category>/<int:z>/<int:x>/<int:y>')
+def save_test_tile(variable, time_input, category, z, x, y):
     """Save a test tile to disk to verify transparency"""
     colormap = request.args.get('colormap', 'Reds')
     vmin = request.args.get('vmin', type=float)
@@ -739,7 +775,7 @@ def save_test_tile(variable, time_idx, category, z, x, y):
     try:
         z_actual = tile_server.get_best_zoom(variable, z, profile)
         values_2d, src_lat, src_lon = tile_server.get_level_slice(
-            variable, z_actual, time_idx, category, profile, profile
+            variable, z_actual, time_input, category, profile, profile
         )
 
         grids = tile_server.get_tile_lonlat_grids(z, x, y, TILE_SIZE, mode=mode)
