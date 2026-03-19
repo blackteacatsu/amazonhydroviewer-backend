@@ -89,8 +89,8 @@ class RegionalTileServer:
             self._index_cache = {}
         return self._index_cache
     
-    def _stem(self, variable: str, level: int = None) -> str:
-        cache_key = (variable, level)
+    def _stem(self, variable: str) -> str:
+        cache_key = variable
         if cache_key in self._stem_cache:
             return self._stem_cache[cache_key]
 
@@ -103,16 +103,10 @@ class RegionalTileServer:
             if not base.exists():
                 raise FileNotFoundError(f"Pyramid directory not found: {base}")
 
-            suffixes = []
-            if level is not None and "_lvl_" not in variable:
-                suffixes.extend([
-                    f"_tercile_probability_max_{variable}_lvl_{level}",
-                    f"_tercile_prob_max_{variable}_lvl_{level}",
-                ])
-            suffixes.extend([
+            suffixes = [
                 f"_tercile_probability_max_{variable}",
                 f"_tercile_prob_max_{variable}",
-            ])
+            ]
             matches = sorted(
                 p.name
                 for p in base.iterdir()
@@ -125,10 +119,7 @@ class RegionalTileServer:
         index = self.load_index()
         init_date = index.get("initialization_date")
         if init_date:
-            if level is not None and "_lvl_" not in variable:
-                remote_stem = f"{init_date}_tercile_prob_max_{variable}_lvl_{level}"
-            else:
-                remote_stem = f"{init_date}_tercile_prob_max_{variable}"
+            remote_stem = f"{init_date}_tercile_prob_max_{variable}"
             self._stem_cache[cache_key] = remote_stem
             return remote_stem
 
@@ -136,36 +127,36 @@ class RegionalTileServer:
             f"Could not resolve pyramid stem for variable '{variable}' in {PYRAMID_DIR}"
         )
     
-    def _base_dir_url(self, variable: str, level: int = None) -> str:
+    def _base_dir_url(self, variable: str) -> str:
         """
         Return base directory reference for variable data.
         """
-        stem = self._stem(variable, level)
+        stem = self._stem(variable)
         return self._join_ref(PYRAMID_DIR, stem)
     
-    def load_pyramid_meta(self, variable, level: int = None):
+    def load_pyramid_meta(self, variable):
         """Load pyramid metadata from remote."""
-        cache_key = self._stem(variable, level)
+        cache_key = self._stem(variable)
         if cache_key in self.pyramids:
             return self.pyramids[cache_key]["meta"]
         
-        base = self._base_dir_url(variable, level)
+        base = self._base_dir_url(variable)
         meta_ref = self._join_ref(base, f"{cache_key}_meta.json")
         meta = self._read_json_ref(meta_ref)
         self.data_bounds = meta.get("data_bounds")
 
         if len(self.pyramids) >= MAX_META_CACHE:
             oldest_key = next(iter(self.pyramids))
-            print(f"[META CACHE] Evicting {oldest_key}")
+            # print(f"[META CACHE] Evicting {oldest_key}")
             del self.pyramids[oldest_key]
 
         self.pyramids[cache_key] = {"meta": meta}
         return meta
     
-    def load_pyramid_bundle(self, variable, z, level: int = None):
+    def load_pyramid_bundle(self, variable, z):
         """Load one zoom-level npz bundle for one request."""
-        meta = self.load_pyramid_meta(variable, level)
-        base = self._base_dir_url(variable, level)
+        meta = self.load_pyramid_meta(variable)
+        base = self._base_dir_url(variable)
 
         files = meta.get("files")
         z_key = str(int(z))
@@ -217,10 +208,14 @@ class RegionalTileServer:
             f"Unknown time input '{time_input}'. Available dates: {available_dates}"
         )
 
-    def get_level_slice(self, variable: str, z: int, time_input, category_idx: int, profile_idx: int = 0, level: int = None):
+    def get_level_slice(self, variable: str, 
+                        z: int, 
+                        time_input, 
+                        category_idx: int, 
+                        profile_idx: int = 0):
         """Return one 2D slice (lat, lon) for a given zoom/time/category/profile."""
-        meta = self.load_pyramid_meta(variable, level)
-        bundle = self.load_pyramid_bundle(variable, z, level)
+        meta = self.load_pyramid_meta(variable)
+        bundle = self.load_pyramid_bundle(variable, z)
         try:
             z = int(z)
             available = [int(v) for v in meta.get('zooms', [])]
@@ -284,15 +279,24 @@ class RegionalTileServer:
         finally:
             bundle.close()
 
-    def get_best_zoom(self, variable: str, requested_zoom: int, level: int = None) -> int:
+    def get_best_zoom(self, variable: str, requested_zoom: int) -> int:
         """Pick nearest available zoom from metadata."""
-        meta = self.load_pyramid_meta(variable, level)
+        meta = self.load_pyramid_meta(variable)
         available = sorted(int(z) for z in meta.get("zooms", []))
         if not available:
             raise KeyError("No zoom levels found in metadata 'zooms'.")
         if requested_zoom in available:
             return requested_zoom
         return min(available, key=lambda k: abs(k - requested_zoom))
+
+    @staticmethod
+    def warn_if_level_query_present(level):
+        """Temporary backward compatibility path for deprecated `level` query param."""
+        if level is not None:
+            print(
+                f"[DEPRECATED] Ignoring query parameter 'level={level}'. "
+                "Depth selection now uses 'profile' only."
+            )
 
     def tile_to_lonlat_bounds(self, zoom, x, y):
         """
@@ -494,7 +498,7 @@ class RegionalTileServer:
         # Create a mask for NaN values before applying colormap
         nan_mask = np.isnan(data)
 
-        print(f"  NaN mask shape: {nan_mask.shape}, NaN count: {nan_mask.sum()}")
+        # print(f"  NaN mask shape: {nan_mask.shape}, NaN count: {nan_mask.sum()}")
 
         # Replace NaN with vmin temporarily (will be made transparent later)
         data_filled = np.where(nan_mask, vmin, data)
@@ -510,7 +514,7 @@ class RegionalTileServer:
         rgba = cmap(norm(data_filled))
         rgba_uint8 = (rgba * 255).astype(np.uint8)
 
-        print(f"  RGBA shape: {rgba_uint8.shape}")
+        # print(f"  RGBA shape: {rgba_uint8.shape}")
 
         # Make NaN values completely transparent
         # Set all channels to 0 for fully transparent pixels
@@ -518,12 +522,12 @@ class RegionalTileServer:
 
         # Verify transparency was applied
         transparent_count = (rgba_uint8[:, :, 3] == 0).sum()
-        print(f"  Transparent pixels: {transparent_count} (should be {nan_mask.sum()})")
+        # print(f"  Transparent pixels: {transparent_count} (should be {nan_mask.sum()})")
 
         img = Image.fromarray(rgba_uint8, mode='RGBA')
 
         # Verify the image mode
-        print(f"  Image mode: {img.mode}, size: {img.size}")
+        # print(f"  Image mode: {img.mode}, size: {img.size}")
 
         # Convert to palette mode with transparency (like WMS)
         # This ensures browser compatibility
@@ -539,7 +543,7 @@ class RegionalTileServer:
         img_p.paste(0, mask=Image.eval(alpha, lambda a: 255 if a == 0 else 0))
         img_p.info['transparency'] = 0
 
-        print(f"  Converted to palette mode with transparency index")
+        # print(f"  Converted to palette mode with transparency index")
 
         return img_p
 
@@ -561,11 +565,13 @@ def get_tile(variable, time_input, category, z, x, y):
     vmin = request.args.get('vmin', type=float)
     vmax = request.args.get('vmax', type=float)
     profile = request.args.get('profile', 0, type=int)
+    level = request.args.get('level', type=int)
     use_cache = request.args.get('cache', 'true').lower() == 'true'
     mode = request.args.get('mode', 'regional')  # 'regional' or 'global'
     tms = request.args.get('tms', 'false').lower() == 'true'  # TMS vs XYZ coordinates
+    tile_server.warn_if_level_query_present(level)
 
-    print(f"Tile request {z}/{x}/{y}: vmin={vmin}, vmax={vmax}, mode={mode}, tms={tms}")
+    # print(f"Tile request {z}/{x}/{y}: vmin={vmin}, vmax={vmax}, mode={mode}, tms={tms}")
 
     # Build cache key BEFORE any coordinate conversion
     cache_key = f"{variable}_{time_input}_{category}_{z}_{x}_{y}_{colormap}_{vmin}_{vmax}_{profile}_{mode}_{tms}"
@@ -576,16 +582,16 @@ def get_tile(variable, time_input, category, z, x, y):
         # XYZ: Y=0 at north, need to flip to TMS (Y=0 at south)
         n_tiles = 2 ** z
         y = (n_tiles - 1) - y
-        print(f"  Converted XYZ to TMS: y_new={y}")
+        # print(f"  Converted XYZ to TMS: y_new={y}")
 
     if use_cache and cache_hash in TILE_IMAGE_CACHE:
         response = send_file(
             BytesIO(TILE_IMAGE_CACHE[cache_hash]),
             mimetype='image/png'
         )
-        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-        response.headers['Pragma'] = 'no-cache'
-        response.headers['Expires'] = '0'
+        response.headers['Cache-Control'] = 'public, max-age=300'
+        # response.headers['Pragma'] = 'no-cache'
+        # response.headers['Expires'] = '0'
         return response
 
     values_2d = None
@@ -594,9 +600,9 @@ def get_tile(variable, time_input, category, z, x, y):
     tile_data = None
     try:
         # Resolve nearest available zoom and load one 2D source slice
-        z_actual = tile_server.get_best_zoom(variable, z, profile)
+        z_actual = tile_server.get_best_zoom(variable, z)
         values_2d, src_lat, src_lon = tile_server.get_level_slice(
-            variable, z_actual, time_input, category, profile, profile
+            variable, z_actual, time_input, category, profile
         )
 
         # Get tile coordinate grids
@@ -606,7 +612,7 @@ def get_tile(variable, time_input, category, z, x, y):
         if grids is None:
             image = Image.new('RGBA', (TILE_SIZE, TILE_SIZE), (0, 0, 0, 0))
             img_io = BytesIO()
-            image.save(img_io, 'PNG', optimize=True)
+            image.save(img_io, 'PNG')
             response = send_file(BytesIO(img_io.getvalue()), mimetype='image/png')
             response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
             response.headers['Pragma'] = 'no-cache'
@@ -620,7 +626,7 @@ def get_tile(variable, time_input, category, z, x, y):
 
         # Debug: Check NaN percentage
         nan_pct = np.isnan(tile_data).sum() / tile_data.size * 100
-        print(f"Tile {z}/{x}/{y}: {nan_pct:.1f}% NaN values")
+        # print(f"Tile {z}/{x}/{y}: {nan_pct:.1f}% NaN values")
 
         # Create image
         image = tile_server.create_colormap_image(tile_data, colormap, vmin, vmax)
@@ -667,16 +673,19 @@ def get_tile(variable, time_input, category, z, x, y):
         del src_lat
         del src_lon
         del tile_data
-        gc.collect()
+        # gc.collect()
+        pass
 
 
 @app.route('/pyramid/info/<variable>')
 def pyramid_info(variable):
     """Get pyramid information"""
     profile = request.args.get('profile', 0, type=int)
+    level = request.args.get('level', type=int)
+    tile_server.warn_if_level_query_present(level)
 
     try:
-        meta = tile_server.load_pyramid_meta(variable, profile)
+        meta = tile_server.load_pyramid_meta(variable)
         zoom_levels = sorted(int(z) for z in meta.get("zooms", []))
 
         # Convert numpy types to native Python types for JSON serialization
@@ -703,7 +712,7 @@ def pyramid_info(variable):
         }
 
         for zoom in zoom_levels:
-            bundle = tile_server.load_pyramid_bundle(variable, zoom, profile)
+            bundle = tile_server.load_pyramid_bundle(variable, zoom)
             try:
                 if f"z{zoom}_lat" in bundle.files:
                     lat = bundle[f"z{zoom}_lat"]
@@ -727,15 +736,17 @@ def pyramid_info(variable):
 def pyramid_time(variable):
     """Get available time coordinates for a variable."""
     profile = request.args.get('profile', 0, type=int)
+    level = request.args.get('level', type=int)
+    tile_server.warn_if_level_query_present(level)
 
     try:
-        meta = tile_server.load_pyramid_meta(variable, profile)
+        meta = tile_server.load_pyramid_meta(variable)
         zoom_levels = sorted(int(z) for z in meta.get("zooms", []))
         if not zoom_levels:
             raise KeyError("No zoom levels found in metadata 'zooms'.")
 
         # Time coordinate is shared across levels; read once from request-scoped bundle.
-        bundle = tile_server.load_pyramid_bundle(variable, zoom_levels[0], profile)
+        bundle = tile_server.load_pyramid_bundle(variable, zoom_levels[0])
         try:
             time_values = bundle["time"]
         finally:
@@ -766,16 +777,18 @@ def save_test_tile(variable, time_input, category, z, x, y):
     vmin = request.args.get('vmin', type=float)
     vmax = request.args.get('vmax', type=float)
     profile = request.args.get('profile', 0, type=int)
+    level = request.args.get('level', type=int)
     mode = request.args.get('mode', 'global')
+    tile_server.warn_if_level_query_present(level)
 
     values_2d = None
     src_lat = None
     src_lon = None
     tile_data = None
     try:
-        z_actual = tile_server.get_best_zoom(variable, z, profile)
+        z_actual = tile_server.get_best_zoom(variable, z)
         values_2d, src_lat, src_lon = tile_server.get_level_slice(
-            variable, z_actual, time_input, category, profile, profile
+            variable, z_actual, time_input, category, profile
         )
 
         grids = tile_server.get_tile_lonlat_grids(z, x, y, TILE_SIZE, mode=mode)
@@ -800,7 +813,8 @@ def save_test_tile(variable, time_input, category, z, x, y):
         del src_lat
         del src_lon
         del tile_data
-        gc.collect()
+        # gc.collect()
+        pass
 
 
 @app.route('/cache/clear')
