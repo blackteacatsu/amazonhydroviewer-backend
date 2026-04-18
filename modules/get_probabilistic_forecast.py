@@ -3,6 +3,7 @@ import numpy as np
 from pathlib import Path
 import re
 from datetime import datetime
+import os
 
 def read_trim_forecast(file_path, va):
     """
@@ -239,3 +240,13 @@ def split_forecast_and_hindcasts(
     hindcasts.sort(key=lambda p: _parse_date_from_name(p.name))
 
     return str(forecast_path), [str(p) for p in hindcasts], forecast_dt
+
+def purge_old_init(directory: Path, current_init: str):
+    import shutil
+    for f in list(directory.glob('*')):
+        if f.name.endswith(".json"):
+            continue
+            
+        if current_init not in f.name:
+            shutil.rmtree(f)
+            print(f"Deleted (old init): {f}")
