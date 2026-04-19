@@ -427,7 +427,7 @@ class RegionalTileServer:
         nearest_rev = idx_rev - choose_left.astype(np.int64)
         return (coord.size - 1) - nearest_rev
 
-    def get_tile_data(self, values_2d, src_lon, src_lat, tile_lon, tile_lat):
+    def get_tile_data(self, values_2d, src_lon, src_lat, tile_lon, tile_lat, search_radius=1):
         """
         Sample a 2D source grid to the tile grid with nearest-neighbor lookup.
 
@@ -471,11 +471,42 @@ class RegionalTileServer:
         )
 
         sampled_flat = np.full(tile_lon_flat.shape, np.nan, dtype=np.float32)
+
         if np.any(in_bounds):
             lon_idx = self._nearest_indices_1d(src_lon, tile_lon_flat[in_bounds])
             lat_idx = self._nearest_indices_1d(src_lat, tile_lat_flat[in_bounds])
-            sampled_vals = values_2d[lat_idx, lon_idx]
-            sampled_flat[in_bounds] = sampled_vals.astype(np.float32, copy=False)
+
+            sampled_vals = values_2d[lat_idx, lon_idx].astype(np.float32, copy=False)
+
+            nan_mask = ~np.isfinite(sampled_vals)
+            if np.any(nan_mask) and search_radius > 0:
+                bad_pos = np.where(nan_mask)[0]
+
+                for p in bad_pos:
+                    i = lat_idx[p]
+                    j = lon_idx[p]
+
+                    i0 = max(0, i - search_radius)
+                    i1 = min(values_2d.shape[0], i + search_radius + 1)
+                    j0 = max(0, j - search_radius)
+                    j1 = min(values_2d.shape[1], j + search_radius + 1)
+
+                    window = values_2d[i0:i1, j0:j1]
+                    valid = np.isfinite(window)
+
+                    if np.any(valid):
+                        wi, wj = np.where(valid)
+                        abs_i = i0 + wi
+                        abs_j = j0 + wj
+
+                        di = abs_i - i
+                        dj = abs_j - j
+                        d2 = di * di + dj * dj
+                        k = np.argmin(d2)
+
+                        sampled_vals[p] = values_2d[abs_i[k], abs_j[k]]
+
+            sampled_flat[in_bounds] = sampled_vals #.astype(np.float32, copy=False)
 
         return sampled_flat.reshape(tile_lon.shape)
     
