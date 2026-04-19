@@ -604,9 +604,22 @@ def get_tile(variable, time_input, category, z, x, y):
         values_2d, src_lat, src_lon = tile_server.get_level_slice(
             variable, z_actual, time_input, category, profile
         )
+        
+        # If request overzooms beyond available data, sample from the parent tile
+        # at z_actual so features stay visible instead of collapsing to NaN.
+        if z > z_actual:
+            dz = z - z_actual
+            factor = 2 ** dz
+            x_sample = x // factor
+            y_sample = y // factor
+            z_sample = z_actual
+        else:
+            x_sample = x
+            y_sample = y
+            z_sample = z
 
         # Get tile coordinate grids
-        grids = tile_server.get_tile_lonlat_grids(z, x, y, TILE_SIZE, mode=mode)
+        grids = tile_server.get_tile_lonlat_grids(z_sample, x_sample, y_sample, TILE_SIZE, mode=mode)
 
         # If tile is outside data bounds (in global mode), return transparent tile
         if grids is None:
