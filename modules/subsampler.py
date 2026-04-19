@@ -262,7 +262,7 @@ def get_tile_data(pyramid, zoom, tile_x, tile_y, time_idx=0, category_idx=0):
     tile_data_flat = data_slice.interp(
         lat=xr.DataArray(lat.ravel(), dims='points'),
         lon=xr.DataArray(lon.ravel(), dims='points'),
-        method='nearest'
+        method='linear'
     ).values
     #print(f'\n Type {type(tile_data_flat)}')
     tile_data = tile_data_flat.reshape(lon.shape)
