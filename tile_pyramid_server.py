@@ -471,18 +471,26 @@ class RegionalTileServer:
         )
 
         sampled_flat = np.full(tile_lon_flat.shape, np.nan, dtype=np.float32)
-
         if np.any(in_bounds):
-            filled_values, dist_to_valid = fill_nan_with_nearest_valid(values_2d)
-
             lon_idx = self._nearest_indices_1d(src_lon, tile_lon_flat[in_bounds])
             lat_idx = self._nearest_indices_1d(src_lat, tile_lat_flat[in_bounds])
+            sampled_vals = values_2d[lat_idx, lon_idx]
+            sampled_flat[in_bounds] = sampled_vals.astype(np.float32, copy=False)
 
-            sampled_vals = filled_values[lat_idx, lon_idx]
-            sampled_dist = dist_to_valid[lat_idx, lon_idx]
+        return sampled_flat.reshape(tile_lon.shape)
 
-            # keep only pixels close to a real river cell
-            sampled_vals[sampled_dist > 1.5] = np.nan
+
+        # if np.any(in_bounds):
+        #     filled_values, dist_to_valid = fill_nan_with_nearest_valid(values_2d)
+
+        #     lon_idx = self._nearest_indices_1d(src_lon, tile_lon_flat[in_bounds])
+        #     lat_idx = self._nearest_indices_1d(src_lat, tile_lat_flat[in_bounds])
+
+        #     sampled_vals = filled_values[lat_idx, lon_idx]
+        #     sampled_dist = dist_to_valid[lat_idx, lon_idx]
+
+        #     # keep only pixels close to a real river cell
+        #     sampled_vals[sampled_dist > 1.5] = np.nan
 
             # nan_mask = ~np.isfinite(sampled_vals)
             # if np.any(nan_mask) and search_radius > 0:
@@ -512,9 +520,9 @@ class RegionalTileServer:
 
             #             sampled_vals[p] = values_2d[abs_i[k], abs_j[k]]
 
-            sampled_flat[in_bounds] = sampled_vals #.astype(np.float32, copy=False)
+        #     sampled_flat[in_bounds] = sampled_vals #.astype(np.float32, copy=False)
 
-        return sampled_flat.reshape(tile_lon.shape)
+        # return sampled_flat.reshape(tile_lon.shape)
     
     def create_colormap_image(self, data, colormap_name, vmin, vmax):
         """Create RGBA image from data"""
@@ -624,17 +632,17 @@ class RegionalTileServer:
 
     #         return out
 
-def fill_nan_with_nearest_valid(values_2d):
-    valid = np.isfinite(values_2d)
+# def fill_nan_with_nearest_valid(values_2d):
+#     valid = np.isfinite(values_2d)
 
-    if not np.any(valid):
-        return values_2d.copy(), np.full(values_2d.shape, np.inf, dtype=np.float32)
+#     if not np.any(valid):
+#         return values_2d.copy(), np.full(values_2d.shape, np.inf, dtype=np.float32)
 
-    # indices of nearest valid cell for every location
-    dist, inds = distance_transform_edt(~valid, return_indices=True)
+#     # indices of nearest valid cell for every location
+#     dist, inds = distance_transform_edt(~valid, return_indices=True)
 
-    filled = values_2d[inds[0], inds[1]]
-    return filled.astype(np.float32, copy=False), dist.astype(np.float32, copy=False)
+#     filled = values_2d[inds[0], inds[1]]
+#     return filled.astype(np.float32, copy=False), dist.astype(np.float32, copy=False)
 
 # Global server instance
 tile_server = RegionalTileServer()
