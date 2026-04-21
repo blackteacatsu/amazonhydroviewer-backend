@@ -644,6 +644,72 @@ class RegionalTileServer:
 #     filled = values_2d[inds[0], inds[1]]
 #     return filled.astype(np.float32, copy=False), dist.astype(np.float32, copy=False)
 
+    def rasterize_sparse_cells_to_tile(self, values_2d, src_lon, src_lat, tile_lon, tile_lat):
+        """
+        Rasterize valid native source cells directly into tile pixels.
+        Good for sparse line-like fields such as streamflow.
+        """
+        if values_2d.ndim != 2:
+            raise ValueError(f"values_2d must be 2D [lat,lon], got shape {values_2d.shape}")
+        if values_2d.shape != (len(src_lat), len(src_lon)):
+            raise ValueError(
+                f"values shape mismatch: values={values_2d.shape}, "
+                f"lat={len(src_lat)}, lon={len(src_lon)}"
+            )
+
+        src_lon = np.asarray(src_lon)
+        src_lat = np.asarray(src_lat)
+
+        tile_h, tile_w = tile_lon.shape
+        out = np.full((tile_h, tile_w), np.nan, dtype=np.float32)
+
+        lon_left = float(np.min(tile_lon))
+        lon_right = float(np.max(tile_lon))
+        lat_top = float(np.max(tile_lat))
+        lat_bottom = float(np.min(tile_lat))
+
+        # native spacing
+        dlon = float(np.abs(np.diff(src_lon).mean())) if len(src_lon) > 1 else 0.0
+        dlat = float(np.abs(np.diff(src_lat).mean())) if len(src_lat) > 1 else 0.0
+
+        # pad by half a native cell so edge cells are included
+        lon_mask = (src_lon >= lon_left - 0.5 * dlon) & (src_lon <= lon_right + 0.5 * dlon)
+        lat_mask = (src_lat >= lat_bottom - 0.5 * dlat) & (src_lat <= lat_top + 0.5 * dlat)
+
+        if not np.any(lon_mask) or not np.any(lat_mask):
+            return out
+
+        sub_lon = src_lon[lon_mask]
+        sub_lat = src_lat[lat_mask]
+        sub_vals = values_2d[np.ix_(lat_mask, lon_mask)]
+
+        valid = np.isfinite(sub_vals)
+        if not np.any(valid):
+            return out
+
+        lat_idx_src, lon_idx_src = np.where(valid)
+        vals = sub_vals[lat_idx_src, lon_idx_src].astype(np.float32, copy=False)
+
+        lons = sub_lon[lon_idx_src]
+        lats = sub_lat[lat_idx_src]
+
+        # map source-cell centers to tile pixel indices
+        xpix = np.round((lons - lon_left) / (lon_right - lon_left) * (tile_w - 1)).astype(int)
+        ypix = np.round((lat_top - lats) / (lat_top - lat_bottom) * (tile_h - 1)).astype(int)
+
+        good = (xpix >= 0) & (xpix < tile_w) & (ypix >= 0) & (ypix < tile_h)
+        xpix = xpix[good]
+        ypix = ypix[good]
+        vals = vals[good]
+
+        # if multiple source cells land on same pixel, keep the max
+        for xp, yp, v in zip(xpix, ypix, vals):
+            old = out[yp, xp]
+            if np.isnan(old) or v > old:
+                out[yp, xp] = v
+
+        return out
+
 # Global server instance
 tile_server = RegionalTileServer()
 
@@ -701,6 +767,8 @@ def get_tile(variable, time_input, category, z, x, y):
         values_2d, src_lat, src_lon = tile_server.get_level_slice(
             variable, z_actual, time_input, category, profile
         )
+        meta = tile_server.load_pyramid_meta(variable)
+        grain = int(meta.get("grain_map", {}).get(str(z_actual), 1))
         
         # If request overzooms beyond available data, sample from the parent tile
         # at z_actual so features stay visible instead of collapsing to NaN.
@@ -732,7 +800,12 @@ def get_tile(variable, time_input, category, z, x, y):
         lon, lat = grids
 
         # Resample source grid to tile grid with NumPy nearest neighbor
-        tile_data = tile_server.get_tile_data(values_2d, src_lon, src_lat, lon, lat)
+        #tile_data = tile_server.get_tile_data(values_2d, src_lon, src_lat, lon, lat)
+        is_streamflow = "streamflow" in variable.lower()
+        if is_streamflow and grain == 1:
+            tile_data = tile_server.rasterize_sparse_cells_to_tile(values_2d, src_lon, src_lat, lon, lat)
+        else:
+            tile_data = tile_server.get_tile_data(values_2d, src_lon, src_lat, lon, lat)
 
         # if 'streamflow'in variable.lower():
         #     tile_data = tile_server.thicken_sparse_features(tile_data, passes=1)
