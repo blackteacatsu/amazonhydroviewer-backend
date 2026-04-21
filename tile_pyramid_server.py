@@ -709,6 +709,45 @@ class RegionalTileServer:
                 out[yp, xp] = v
 
         return out
+    def thicken_sparse_features(self, tile_data, passes=1):
+        """
+        Expand sparse valid pixels into immediate neighbors.
+        Useful for line-like fields (e.g., streamflow) that can look like
+        they disappear at high zoom due to sub-pixel width.
+        """
+        data = np.asarray(tile_data, dtype=np.float32)
+        out = data.copy()
+
+        for _ in range(max(1, int(passes))):
+            base = out.copy()
+            nan_mask = np.isnan(out)
+            if not np.any(nan_mask):
+                break
+
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    if dy == 0 and dx == 0:
+                        continue
+
+                    dst_y0 = max(0, dy)
+                    dst_y1 = min(out.shape[0], out.shape[0] + dy)
+                    dst_x0 = max(0, dx)
+                    dst_x1 = min(out.shape[1], out.shape[1] + dx)
+
+                    src_y0 = max(0, -dy)
+                    src_y1 = min(base.shape[0], base.shape[0] - dy)
+                    src_x0 = max(0, -dx)
+                    src_x1 = min(base.shape[1], base.shape[1] - dx)
+
+                    src = base[src_y0:src_y1, src_x0:src_x1]
+                    dst = out[dst_y0:dst_y1, dst_x0:dst_x1]
+                    dst_nan = np.isnan(dst)
+                    src_valid = np.isfinite(src)
+                    fill = dst_nan & src_valid
+                    if np.any(fill):
+                        dst[fill] = src[fill]
+
+        return out
 
 # Global server instance
 tile_server = RegionalTileServer()
@@ -804,6 +843,7 @@ def get_tile(variable, time_input, category, z, x, y):
         is_streamflow = "streamflow" in variable.lower()
         if is_streamflow and grain == 1:
             tile_data = tile_server.rasterize_sparse_cells_to_tile(values_2d, src_lon, src_lat, lon, lat)
+            tile_data = tile_server.thicken_sparse_features(tile_data, passes=1)
         else:
             tile_data = tile_server.get_tile_data(values_2d, src_lon, src_lat, lon, lat)
 
