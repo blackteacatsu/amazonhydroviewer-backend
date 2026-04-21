@@ -839,13 +839,13 @@ def get_tile(variable, time_input, category, z, x, y):
         lon, lat = grids
 
         # Resample source grid to tile grid with NumPy nearest neighbor
-        #tile_data = tile_server.get_tile_data(values_2d, src_lon, src_lat, lon, lat)
+        tile_data = tile_server.get_tile_data(values_2d, src_lon, src_lat, lon, lat)
         is_streamflow = "streamflow" in variable.lower()
         if is_streamflow and grain == 1:
-            tile_data = tile_server.rasterize_sparse_cells_to_tile(values_2d, src_lon, src_lat, lon, lat)
+            #tile_data = tile_server.rasterize_sparse_cells_to_tile(values_2d, src_lon, src_lat, lon, lat)
             tile_data = tile_server.thicken_sparse_features(tile_data, passes=1)
-        else:
-            tile_data = tile_server.get_tile_data(values_2d, src_lon, src_lat, lon, lat)
+        #else:
+            #tile_data = tile_server.get_tile_data(values_2d, src_lon, src_lat, lon, lat)
 
         # if 'streamflow'in variable.lower():
         #     tile_data = tile_server.thicken_sparse_features(tile_data, passes=1)
