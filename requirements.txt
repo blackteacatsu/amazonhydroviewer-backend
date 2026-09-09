@@ -1,5 +1,6 @@
 xarray
 dask[array]
+dask[distributed]
 geopandas
 regionmask
 regionmask

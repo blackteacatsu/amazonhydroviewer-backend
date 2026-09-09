@@ -7,8 +7,13 @@ run the following cells to initialize data for visualization.
 """
 
 from __future__ import annotations
+from pathlib import Path
+from git import Repo
+from datetime import datetime
+from dask.distributed import Client, LocalCluster
 
 import argparse
+import os
 
 import modules.utils as utils
 import modules.data_subsampler as subsampler 
@@ -16,10 +21,11 @@ import modules.get_zonal_stats as zonal
 import modules.get_prob_fcst as prob
 
 
-from pathlib import Path
-from git import Repo
-from datetime import datetime
-import os
+clustr = LocalCluster(
+    n_workers=4,
+    threads_per_worker=4
+)
+
 
 # Current working directory
 CWD = Path(os.getcwd())
