@@ -255,7 +255,7 @@ def run_initialization(
         prob_fcst_cache_dir=probability_dir,
         init_date=init_date,
         river_mask_file=None,
-        mask_zeros=True, # <-- change this to True, if 0 zeros in the data means NaN, confirm metadata w/ prakrut...
+        mask_zeros=False, # <-- change this to True, if zeros in the data mean NaN, confirm  w/ prakrut...
     )
     fire_risk_paths = _write_fire_risk(
         args, probability_dir, result_dir, init_date
