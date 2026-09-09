@@ -422,6 +422,7 @@ FodyWeavers.xsd
 tmp
 core
 testbench
+test_*
 
 # macOS
 .DS_Store
