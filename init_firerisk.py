@@ -266,7 +266,7 @@ def run_initialization(
         "forecast_file": str(target_file.resolve()),
         "reference_files": [str(path.resolve()) for path in references],
         "reference_count": len(references),
-        "cross_validation": "2001-2020 fixed period climatology",
+        "cross_validation": f"{args.hcst_start_year}-{args.hcst_end_year} fixed period climatology",
         "variables": args.variables,
         "fire_risk_method": args.fire_risk_method,
         "minimum_probability_percent": args.minimum_probability,
