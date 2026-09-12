@@ -14,8 +14,8 @@ from datetime import datetime
 import json
 from pathlib import Path
 
-import modules.get_prob_fcst as prob
-import modules.get_wildfire_fcst as fire
+# import modules.get_prob_fcst as prob
+import modules.fireRisk.angstrom as afi
 import modules.utils as utils
 
 
@@ -24,9 +24,9 @@ SURFACE_MODEL_DIR = Path(
     "/mnt/vast/prakrut/backup/lis_runs/malaria_amazon/forecast/monthly"
 )
 VARIABLES = {
-    fire.RAINF_VARIABLE: "Average precipitation",
-    fire.TEMPERATURE_VARIABLE: "Average air temperature",
-    fire.SOIL_MOISTURE_VARIABLE: "Soil moisture",
+    afi.HUMIDITY_VARIABLE: "Specific Humidity",
+    afi.TEMP_VARIABLE: "Average air temperature",
+    afi.SURFACEP_VARIABLE: "Surface Pressure",
 }
 
 
@@ -150,52 +150,52 @@ def _select_targets(
     return matches
 
 
-def _reference_files(
-    files: dict[datetime, Path],
-    target_date: datetime,
-    start_year: int,
-    end_year: int,
-) -> list[Path]:
-    references = [
-        path
-        for date, path in files.items()
-        if start_year <= date.year <= end_year
-        and date.month == target_date.month
-        and date.day == target_date.day
-        and date.year != target_date.year
-    ]
-    references.sort(key=lambda path: utils._parse_date_from_name(path.name))
-    expected = end_year - start_year + 1
-    if len(references) != expected:
-        raise FileNotFoundError(
-            f"Expected {expected} reference files for "
-            f"{target_date:%Y-%m}, but found {len(references)}. Check that every "
-            f"year from {start_year} through {end_year} has this initialization."
-        )
-    return references
+# def _reference_files(
+#     files: dict[datetime, Path],
+#     target_date: datetime,
+#     start_year: int,
+#     end_year: int,
+# ) -> list[Path]:
+#     references = [
+#         path
+#         for date, path in files.items()
+#         if start_year <= date.year <= end_year
+#         and date.month == target_date.month
+#         and date.day == target_date.day
+#         and date.year != target_date.year
+#     ]
+#     references.sort(key=lambda path: utils._parse_date_from_name(path.name))
+#     expected = end_year - start_year + 1
+#     if len(references) != expected:
+#         raise FileNotFoundError(
+#             f"Expected {expected} reference files for "
+#             f"{target_date:%Y-%m}, but found {len(references)}. Check that every "
+#             f"year from {start_year} through {end_year} has this initialization."
+#         )
+#     return references
 
 
-def _validate_method_variables(method: str, variables: set[str]) -> None:
-    required: set[str] = set()
-    if method in ("tp", "both"):
-        required.update((fire.RAINF_VARIABLE, fire.TEMPERATURE_VARIABLE))
-    if method in ("soilmoist", "both"):
-        required.add(fire.SOIL_MOISTURE_VARIABLE)
-    missing = required.difference(variables)
-    if missing:
-        raise SystemExit(
-            f"Fire-risk method {method!r} requires variables: {sorted(missing)}"
-        )
+# def _validate_method_variables(method: str, variables: set[str]) -> None:
+#     required: set[str] = set()
+#     if method in ("tp", "both"):
+#         required.update((fire.RAINF_VARIABLE, fire.TEMPERATURE_VARIABLE))
+#     if method in ("soilmoist", "both"):
+#         required.add(fire.SOIL_MOISTURE_VARIABLE)
+#     missing = required.difference(variables)
+#     if missing:
+#         raise SystemExit(
+#             f"Fire-risk method {method!r} requires variables: {sorted(missing)}"
+#         )
 
 
-def _write_fire_risk(
+def _write_angstrom_index(
     args: argparse.Namespace,
-    probability_dir: Path,
+    model_dir: Path,
     result_dir: Path,
     init_date: str,
 ) -> list[Path]:
     written: list[Path] = []
-    if args.fire_risk_method in ("tp", "both"):
+    if args.fire_risk_method in ("tp", "both"): # <-- replace with angstrom
         tp_risk = fire.build_fire_risk_tp(
             probability_dir,
             init_date=init_date,
@@ -206,18 +206,19 @@ def _write_fire_risk(
         tp_risk.to_zarr(tp_path, zarr_format=2, mode="w")
         written.append(tp_path)
 
-    if args.fire_risk_method in ("soilmoist", "both"):
-        soil_store = fire.probability_store(
-            probability_dir, init_date, fire.SOIL_MOISTURE_VARIABLE
-        )
-        soil_risk = fire.build_fire_risk_soilm(
-            soil_store,
-            minimum_probability=args.minimum_probability,
-            soil_profile_index=args.soil_profile_index,
-        )
-        soil_path = result_dir / "fire_risk_soilmoist.zarr"
-        soil_risk.to_zarr(soil_path, zarr_format=2, mode="w")
-        written.append(soil_path)
+    # if args.fire_risk_method in ("soilmoist", "both"):
+    #     soil_store = fire.probability_store(
+    #         probability_dir, init_date, fire.SOIL_MOISTURE_VARIABLE
+    #     )
+    #     soil_risk = fire.build_fire_risk_soilm(
+    #         soil_store,
+    #         minimum_probability=args.minimum_probability,
+    #         soil_profile_index=args.soil_profile_index,
+    #     )
+    #     soil_path = result_dir / "fire_risk_soilmoist.zarr"
+    #     soil_risk.to_zarr(soil_path, zarr_format=2, mode="w")
+    #     written.append(soil_path)
+    
     return written
 
 
