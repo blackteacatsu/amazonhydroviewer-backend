@@ -103,8 +103,12 @@ def split_fcst_hcst(
         )
 
     items.sort(key=lambda item: (item[0], item[1], item[2]))
+
+    # The program will select the latest initialization as targeted forecast
     if fcst_init_date is None:
         fcst_date, _, _, fcst_path = items[-1]
+
+    # A special date is requested, over-ride latest initialization
     else:
         requested_items = [
             item
