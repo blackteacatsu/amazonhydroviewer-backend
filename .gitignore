@@ -423,6 +423,7 @@ tmp
 core
 testbench
 test_*
+angstrom_fire_output
 
 # macOS
 .DS_Store
