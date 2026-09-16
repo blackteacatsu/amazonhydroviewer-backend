@@ -21,10 +21,10 @@ import modules.get_zonal_stats as zonal
 import modules.get_prob_fcst as prob
 
 
-clustr = LocalCluster(
-    n_workers=4,
-    threads_per_worker=4
-)
+# cluster = LocalCluster(
+#     n_workers=4,
+#     threads_per_worker=4
+# )
 
 
 # Current working directory
