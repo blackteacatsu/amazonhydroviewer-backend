@@ -193,10 +193,10 @@ def get_dmc(
 
         """
         (
-            da_Tair_f_tavg, da_QRair_tavg,
+            da_Tair_f_tavg, da_QRair_tavg, da_day_lengths,
             da_Rainf_tavg, da_dmc_previous,
         ) = xr.align(
-            da_Tair_f_tavg, da_QRair_tavg, 
+            da_Tair_f_tavg, da_QRair_tavg, da_day_lengths,
             da_Rainf_tavg, da_dmc_previous, join='exact', copy=False
         )
         # Preparation B: identify valid cells (input checks, not an FWI equation).
@@ -258,16 +258,7 @@ def get_dmc(
             * (100 - da_QRair_tavg) 
             * da_day_lengths
         )
-        
         # Step 7 / Eq. (17): calculate dmc from either from P_o or P_r
-        # da_dmc = xr.where(
-        #     da_Rainf_mask,
-        #     da_P_r + 100 * da_K,
-        #     xr.where(
-        #         da_Rainf_tavg <= 1.5,
-        #         da_dmc = da_dmc_previous + 100 * da_K
-        #     )
-        # )
         da_dmc = (
             da_dmc_previous + 100 * da_K
         ).where(da_valid).rename('dmc')
@@ -283,12 +274,60 @@ def get_dmc(
 DROUGHT CODE
 """
 def get_drought_code(
-        da_ : xr.DataArray,
-        da_Rainf_tavg : xr.DataArray
-        da_d
+        #da_ : xr.DataArray,
+        da_Tair_f_tavg : xr.DataArray,
+        da_Rainf_tavg : xr.DataArray,
+        da_dc_previous : xr.DataArray,
+        da_day_lengths : xr.DataArray,
 )-> xr.DataArray:
-    if da_Rainf_tavg > 2.8:
-        da_R_d = 0.83 * da_Rainf_tavg - 1.27
+    """
+    Placeholder - add doc string
+    """
+    (
+        da_Tair_f_tavg, da_Rainf_tavg,
+        da_dc_previous, da_day_lengths,
+    ) = xr.align(
+        da_Tair_f_tavg, da_Rainf_tavg,
+        da_dc_previous, da_day_lengths,
+        join='exact', copy=False
+    )
+    da_valid = (
+        np.isfinite(da_Tair_f_tavg)
+        & np.isfinite(da_Rainf_tavg)
+        & np.isfinite(da_dc_previous)
+        & (da_Rainf_tavg >= 0)
+        & (da_dc_previous >= 0) & (da_dc_previous <= 101)
+    )
+    da_Rainf_tavg = da_Rainf_tavg.astype(np.float64).where(da_valid, 20.0)
+
+    # Step 1 / Eq. (18): get effective rainfall
+    da_Rainf_mask = da_Rainf_tavg > 2.8
+    da_Rain_eff = xr.where(da_Rainf_mask, 0.83*da_Rainf_tavg - 12.7)
+    # Step 2 / Eq. 
+    da_moisture_eq_previous = (
+        800 * np.expm1(- da_dc_previous / 400)
+    )
+    da_moisture_eq_aft_rain = (
+        da_moisture_eq_previous + 3.937 * da_Rain_eff
+    )
+    da_dc_aft_rain = (
+        400 * np.log(800/da_moisture_eq_aft_rain)
+    )
+
+    da_dc_previous = xr.where(
+        da_Rainf_mask,
+        da_dc_aft_rain.clip(min=0),
+        da_dc_previous
+    )
+    da_Pevap_tavg = 0.36 * (da_Tair_f_tavg.clip(min=-2.8) + 2.8) + da_day_lengths
+    da_dc = (
+        da_dc_previous + 0.5 * da_Pevap_tavg
+    ).where(da_valid).rename("dc")
+    da_dc.attrs = {
+        "long_name" : "Drought Code",
+        "units" : "1",
+    }
+    return da_dc
 
 
 def get_isi(
