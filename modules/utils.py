@@ -11,7 +11,7 @@ import shutil
 
 import xarray as xr
 
-
+# Month tags used in naming LIS runs.
 _MONTHS = {
     month: index + 1
     for index, month in enumerate(
