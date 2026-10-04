@@ -421,7 +421,7 @@ FodyWeavers.xsd
 # Ignore test and tmp files when tracking/pushing
 tmp
 core
-testbench
+test
 test_*
 angstrom_fire_output
 
@@ -430,3 +430,7 @@ angstrom_fire_output
 
 # Bash Automation
 nohup.out
+
+# # Keep the FWI runner regression checks in version control.
+# !tests/fwi/test_runner_restart.py
+# !tests/fwi/test_runner_compute.py
