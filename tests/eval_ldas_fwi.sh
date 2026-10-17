@@ -16,5 +16,7 @@ export PYTHONDONTWRITEBYTECODE=1
 
 exec "$python_bin" "$script_dir/python/get_fireW_index.py" \
     --input "$input_file" \
-    --initial-ffmc 85 --initial-dmc 6 --initial-dc 15 \
+    --initial-ffmc 85 \
+    --initial-dmc 6 \
+    --initial-dc 15 \
     --output-dir "$output_dir" "${@:3}"

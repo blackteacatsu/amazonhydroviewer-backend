@@ -434,3 +434,5 @@ nohup.out
 # # Keep the FWI runner regression checks in version control.
 # !tests/fwi/test_runner_restart.py
 # !tests/fwi/test_runner_compute.py
+
+tests/fwi/test_validate_fwi_modis.py

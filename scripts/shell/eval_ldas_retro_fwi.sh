@@ -6,7 +6,12 @@
 # START_YEAR/END_YEAR select a year range; later years require the preceding daily output.
 
 # Stop on a failed command, an unset variable, or a failure anywhere in a pipeline.
-set -euo pipefail
+set -eo pipefail
+
+source /home/kris/miniconda3/etc/profile.d/conda.sh
+conda activate analytics
+
+set -u
 
 # This script lives in scripts/shell; the Python runner lives in scripts/python.
 # Resolve from the script's location rather than your terminal's working directory.
@@ -22,10 +27,10 @@ work_dir="${WORK_DIR:-$output_dir/.work}" # Temporary annual extraction folders;
 # Use the active environment's Python, or an explicit interpreter supplied via PYTHON.
 python_bin="${PYTHON:-python}"
 
-# A fresh run covers 2001–2025; 
+# A complete run of retrospective FWI covers 2001–2025; 
 # use START_YEAR to resume at a completed year boundary.
 start_year="${START_YEAR:-2001}"
-end_year="${END_YEAR:-2025}"
+end_year="${END_YEAR:-2001}" # <= change this for validation runs
 
 # Validate settings before creating directories or extracting large archives.
 [[ "$start_year" =~ ^[0-9]{4}$ && "$end_year" =~ ^[0-9]{4}$ ]] || {
@@ -45,7 +50,8 @@ export PYTHONDONTWRITEBYTECODE=1
 export DASK_TEMPORARY_DIRECTORY="$work_dir/dask"
 mkdir -p "$output_dir" "$work_dir" "$DASK_TEMPORARY_DIRECTORY"
 
-# Process years sequentially: each year depends on the previous year's moisture codes.
+# Process years sequentially: 
+# each year depends on the previous year's moisture codes.
 for ((year=start_year; year<=end_year; year++)); do
     archive="$archive_dir/SURFACEMODEL_${year}.tar.gz"
     [[ -f "$archive" ]] || { echo "Missing archive: $archive" >&2; exit 1; }

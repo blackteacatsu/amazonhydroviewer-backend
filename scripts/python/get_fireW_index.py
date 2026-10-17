@@ -56,13 +56,15 @@ def parse_args(argv=None):
     p.add_argument('--dask-workers', type=int, default=0, help='Optional local worker processes (0 runs NumPy directly).')
     p.add_argument('--worker-memory', default='4GiB', help='Memory limit per Dask worker; stay within your job allocation.')
     p.add_argument('--chunk-size', type=int, default=270, help='Spatial chunk edge length for Dask.')
-    
+
+    # Define constants used for initializing FWI runs before the first day of available data.
     start = p.add_mutually_exclusive_group()
     start.add_argument('--initial-state', type=Path, help='Explicit checkpoint from the preceding day(override auto search).')
     start.add_argument('--initialize', action='store_true', help='Start a new series using initial constants.')
     p.add_argument('--initial-ffmc', type=float, default=85.0)
     p.add_argument('--initial-dmc', type=float, default=6.0)
     p.add_argument('--initial-dc', type=float, default=15.0)
+
     p.add_argument('--overwrite', action='store_true', help='Replace this run’s output files.')
     args = p.parse_args(argv)
     if args.dask_workers < 0 or args.chunk_size < 1:
@@ -76,9 +78,10 @@ def parse_args(argv=None):
 # Run a chronological batch: prepare inputs, carry moisture codes, and save outputs/checkpoints.
 def run(args:argparse.Namespace) -> dict:
     # Resolve the daily-output directory to an absolute path; expand ~ to the home dir.
-    output_dir = args.output_dir.expanduser().resolve() # define output path as absolute location
+    output_dir = args.output_dir.expanduser().resolve() 
     # Search a shared output tree when months/years use separate output folders.
     restart_root = (args.restart_root or output_dir).expanduser().resolve()
+    
     # Inspect inputs and obtain sorted (timestamp, file path, record index) tuples; 
     # (reject time gaps/duplicates)
     # Collect the original timestamps; these retain their time of day.
@@ -91,7 +94,8 @@ def run(args:argparse.Namespace) -> dict:
     # Build YYYYMMDD for the day immediately before this batch, used to find its checkpoints.
     first_day = utils.read_day(inventory_rows[0], VARIABLES)
     previous_date = str(dates[0] - np.timedelta64(1, 'D')).replace('-', '')
-    # With --initialize use constants; otherwise choose an explicit checkpoint or the expected preceding-day file
+    # With --initialize use predefined constant; 
+    # otherwise choose an explicit checkpoint or the expected preceding-day file
     initial_path = None if args.initialize else utils.find_previous_output(args.initial_state, restart_root, previous_date)
     if initial_path is not None:
         initial_path = initial_path.expanduser().resolve()
@@ -117,7 +121,7 @@ def run(args:argparse.Namespace) -> dict:
         'day_length_scheme': 'original_Canadian_month_tables_not_regionally_calibrated',
         'initialization': 'previous_daily_output' if initial_path else 'assumed_constants_before_first_day',
         'initial_state_file': str(initial_path) if initial_path else '',
-        'initial_ffmc': args.initial_ffmc, 'initial_dmc': args.initial_dmc, 'initial_dc': args.initial_dc,
+        'initial_ffmc': args.initial_ffmc, 'initial_dmc': args.initial_dmc, 'initial_dc': args.initial_dc, 
         'initial_state_date': str(dates[0] - np.timedelta64(1, 'D')),
         'core_sha256': hashlib.sha256(Path(core.__file__).read_bytes()).hexdigest(),
         'runner_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
@@ -126,10 +130,9 @@ def run(args:argparse.Namespace) -> dict:
         'gap_policy': 'invalid forcing invalidates all three carried codes; no automatic reinitialization',
     }
     # For a resumed batch, avoid reporting unused initialization constants.
+    # Select the three constant-initialization metadate entries & remove them.
     if initial_path:
-        # Select the three constant-initialization metadate entries.
         for name in ('initial_ffmc', 'initial_dmc', 'initial_dc'):
-            # Remove this unused constant from the output metadata
             metadata.pop(name)
     # Inherit projection metadata from source file
     # Visit the source projection, grid origin, and spacing attributes.
@@ -138,7 +141,7 @@ def run(args:argparse.Namespace) -> dict:
             value = first_day.attrs[key]
             metadata[key] = value.item() if isinstance(value, np.generic) else value
     # Choose day length factors (Le & Lf) from the month of each original timestamp.
-    factors = utils.get_day_length_factors(selected.time)
+    day_l_factors = utils.get_day_length_factors(selected.time)
     # Keep latitude and longitude arrays, when available, for restart-grid validation.
     # Load and validate 
     first_locations = {n : first_day[n] for n in ('lon', 'lat') if n in first_day}
@@ -175,18 +178,19 @@ def run(args:argparse.Namespace) -> dict:
             moisture_code = [xr.full_like(T, v, dtype=np.float64).where(valid)
                         for v in [args.initial_ffmc, args.initial_dmc, args.initial_dc]]
         # Inspect each of the three codes carried from the previous day.
-        active = valid
         for previous in moisture_code:
             # Required every previous code to be finite; missing history remains masked.
-            active = active & np.isfinite(previous)
-        le = xr.DataArray(float(factors.Le.isel(time=index)))
-        lf = xr.DataArray(float(factors.Lf.isel(time=index)))
+            active = valid & np.isfinite(previous)
+        le = xr.DataArray(float(day_l_factors.Le.isel(time=index)))
+        lf = xr.DataArray(float(day_l_factors.Lf.isel(time=index)))
         ffmc = core.get_ffmc(T, H, W, R, moisture_code[0]).where(active)
         dmc = core.get_dmc(T, H, R, moisture_code[1], le).where(active)
         dc = core.get_drought_code(T, R, moisture_code[2], lf).where(active)
+
         isi = core.get_isi(W, core.ffmc_to_moisture(ffmc)).where(active)
         bui = core.get_bui(dmc, dc).where(active)
         fwi, dsr = core.get_fwi(isi, bui)
+
         fields = [ffmc, dmc, dc, isi, bui, fwi, dsr]
         # Evaluate this day's graph once, before validation, statistics, or writing.
         # Carry computed arrays forward so the graph cannot grow across days.

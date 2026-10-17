@@ -16,8 +16,13 @@ INITIAL_DMC = 6.0
 INITIAL_DC = 15.0
 
 
-def _prepare_inputs(*specs):
-    """A: exact alignment; B: range/finite mask; C: safe float64 operands.
+def _prepare_inputs(
+        *specs : tuple[xr.DataArray, float | None, float | None, float]
+) -> tuple[tuple[xr.DataArray, ...], xr.DataArray]:
+    """
+    Step A: exact alignment; 
+    Step B: range/finite mask; 
+    Step C: safe float64 operands.
 
     Each specification is (DataArray, lower_bound, upper_bound, safe_value).
     None means no bound. Bounds are component-specific: DMC/DC have no 101 cap.
@@ -25,7 +30,7 @@ def _prepare_inputs(*specs):
     No compute/values calls: Dask inputs stay lazy.
     """
     arrays = xr.align(*(spec[0] for spec in specs), join="exact", copy=False)
-    valid = xr.ones_like(arrays[0], dtype=bool)
+    valid = xr.ones_like(arrays[0], dtype=bool) 
     for array, (_, lower, upper, _) in zip(arrays, specs):
         valid = valid & np.isfinite(array)
         if lower is not None:
@@ -81,6 +86,7 @@ def setup_init_cond(
     return da_ffmc_previous, da_dmc_previous, da_dc_previous
 
 
+# 
 def get_ffmc(
         da_Tair_f_tavg: xr.DataArray,
         da_QRair_tavg: xr.DataArray,
@@ -91,7 +97,7 @@ def get_ffmc(
     """Update daily FFMC independently at each cell, preserving xarray labels.
 
     Inputs must be one day's 
-        temperature (degC), 
+        air temperature (degC), 
         relative humidity (%), 
         wind (km/h), 
         preceding 24-hour rainfall (mm), 
@@ -196,7 +202,7 @@ def get_dmc(
     Temperature is degC, RH percent and rainfall 24-hour mm. DMC >= 0 has no
     fixed upper bound. Le must be finite and in [0, 24].
     """
-    # Preparation A-C: include Le and allow DMC above 101.
+    # Preparation A-C: include Day Length Factor (Le) and allow DMC above 101.
     (da_Tair_f_tavg, da_QRair_tavg, da_Rainf_tavg,
      da_dmc_previous, da_day_lengths), da_valid = _prepare_inputs(
         (da_Tair_f_tavg, None, None, 20.0),
@@ -283,8 +289,11 @@ def ffmc_to_moisture(da_ffmc: xr.DataArray) -> xr.DataArray:
     return result
 
 
-def get_isi(da_Wind_f_tavg: xr.DataArray, da_Moist_aft_dry: xr.DataArray) -> xr.DataArray:
-    """Calculate ISI from wind (km/h) and fine-fuel moisture (%), NOT FFMC.
+def get_isi(
+        da_Wind_f_tavg: xr.DataArray, 
+        da_Moist_aft_dry: xr.DataArray
+) -> xr.DataArray:
+    """Calculate Initial Spread Index (ISI) from wind (km/h) and fine-fuel moisture (%), NOT FFMC.
 
     Use ffmc_to_moisture(get_ffmc(...)) for the second argument.
     """
@@ -301,7 +310,10 @@ def get_isi(da_Wind_f_tavg: xr.DataArray, da_Moist_aft_dry: xr.DataArray) -> xr.
     return _result(0.208 * da_func_F * da_func_W, valid, "isi", "Initial Spread Index")
 
 
-def get_bui(da_dmc: xr.DataArray, da_drought_code: xr.DataArray) -> xr.DataArray:
+def get_bui(
+        da_dmc: xr.DataArray, 
+        da_drought_code: xr.DataArray
+) -> xr.DataArray:
     """Combine nonnegative DMC and DC, Eqs. (27a-b); both zero gives BUI=0."""
     (da_dmc, da_drought_code), valid = _prepare_inputs(
         (da_dmc, 0, None, 0.0), (da_drought_code, 0, None, 0.0),
@@ -320,7 +332,10 @@ def get_bui(da_dmc: xr.DataArray, da_drought_code: xr.DataArray) -> xr.DataArray
     return _result(da_bui.clip(min=0), valid, "bui", "Buildup Index")
 
 
-def get_fwi(da_isi: xr.DataArray, da_bui: xr.DataArray) -> tuple[xr.DataArray, xr.DataArray]:
+def get_fwi(
+        da_isi: xr.DataArray, 
+        da_bui: xr.DataArray
+) -> tuple[xr.DataArray, xr.DataArray]:
     """Return daily (FWI, DSR) DataArrays from nonnegative ISI and BUI."""
     (da_isi, da_bui), valid = _prepare_inputs(
         (da_isi, 0, None, 0.0), (da_bui, 0, None, 0.0),

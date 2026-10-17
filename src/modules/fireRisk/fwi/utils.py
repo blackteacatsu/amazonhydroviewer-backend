@@ -78,14 +78,17 @@ def get_day_length_factors(
     return tables.sel(month=da_time.dt.month)
 
 
-def stdize_units(da:xr.DataArray):
+def stdize_units(da:xr.DataArray) -> str:
     value = da.attrs.get('units')
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f'{da.name}: missing units; refusing to guess')
     return value.lower().replace(' ', '').replace('**', '^')
 
 
-def select_dates(source:xr.Dataset, variables:tuple[str]) -> tuple[xr.Dataset, np.ndarray]:
+def select_dates(
+        source:xr.Dataset, 
+        variables:tuple[str]
+) -> tuple[xr.Dataset, np.ndarray]:
     """
     Require a continuous daily sequence, 
     including across file/month boundaries.
@@ -160,8 +163,15 @@ def write_netcdf(dataset:xr.Dataset, path:Path) -> None:
     temporary.replace(path)
 
 
-def attach_daily_time(ds, variables:tuple[str]):
-    """LIS daily files store 2D weather separately from their singleton time."""
+def attach_daily_time(ds:xr.Dataset, variables:tuple[str]) -> xr.Dataset:
+    """LIS daily files store 2D weather separately from their singleton time.
+    
+    Arguments:
+
+    Outputs:
+        xr.Dataset
+    
+    """
     ds = ds.copy(deep=False)
     for name in variables:
         if name not in ds:
@@ -210,12 +220,12 @@ def read_day(record, variables:tuple[str]) -> xr.Dataset:
         return ds[names].isel(time=index, drop=True).load()
 
 
-def daily_output_name(date):
+def daily_output_name(date) -> str:
     """Use the same daily naming convention for writing and restart discovery."""
     return f"LIS_FWI_{str(np.datetime64(date, 'D')).replace('-', '_')}.nc"
 
 
-def find_previous_output(explicit_path, root, previous_date):
+def find_previous_output(explicit_path:Path, root, previous_date):
     """Find exactly one preceding daily file; never guess between duplicate runs."""
     if explicit_path is not None:
         return explicit_path.expanduser().resolve()
@@ -234,7 +244,7 @@ def find_previous_output(explicit_path, root, previous_date):
 
 
 def load_daily_moisture_codes(
-        path, 
+        path:str, 
         first_time, 
         template, 
         locations
@@ -279,7 +289,7 @@ def load_daily_moisture_codes(
     return moisture_codes
 
 
-def load_state(path, first_time, template, locations):
+def load_state(path:str, first_time, template, locations):
     """Reject stale dates, changed grids, and invalid carried moisture codes."""
     with xr.open_dataset(path) as ds:
         ds = ds.load()
