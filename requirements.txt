@@ -116,7 +116,6 @@ pydantic_core==2.46.4
 Pygments==2.20.0
 pyogrio==0.12.1
 pyparsing==3.2.5
-pyproj==3.8.0
 pyshp==3.1.6
 PySocks==1.7.1
 pystac==1.15.2
