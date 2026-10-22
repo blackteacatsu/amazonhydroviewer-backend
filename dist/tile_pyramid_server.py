@@ -20,15 +20,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 
-#import shared
-#from pathlib import Path
 app = Flask(__name__)
 CORS(app)
 
 # Configuration
 TILE_SIZE = 256
-BACKEND_DIR = os.getcwd()
-PYRAMID_DIR = os.path.join('..', BACKEND_DIR, 'get_ldas_probabilistic_output', 'subsampled')
+REPO_ROOT = Path(__file__).resolve().parents[1]
+PYRAMID_DIR = os.path.join(REPO_ROOT, 'get_ldas_probabilistic_output', 'subsampled')
 TILE_IMAGE_CACHE = {}  # Cache rendered tiles
 API_VERSION = "2026-09-04-streamflow-native-grain"
 MAX_META_CACHE = 1
