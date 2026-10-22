@@ -28,7 +28,7 @@ CORS(app)
 # Configuration
 TILE_SIZE = 256
 BACKEND_DIR = os.getcwd()
-PYRAMID_DIR = os.path.join(BACKEND_DIR, 'get_ldas_probabilistic_output', 'subsampled')
+PYRAMID_DIR = os.path.join('..', BACKEND_DIR, 'get_ldas_probabilistic_output', 'subsampled')
 TILE_IMAGE_CACHE = {}  # Cache rendered tiles
 API_VERSION = "2026-09-04-streamflow-native-grain"
 MAX_META_CACHE = 1
