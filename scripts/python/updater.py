@@ -196,6 +196,6 @@ if __name__ == "__main__":
             dashboard_address=None
         ) as cluster:
             with Client(cluster):
-                main(args)
+                main()
     else:
-        main(args)
+        main()
