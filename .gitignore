@@ -413,7 +413,6 @@ FodyWeavers.xsd
 # Windows Installer files from build outputs
 *.cab
 *.msi
-
 *.msix
 *.msm
 *.msp
@@ -421,18 +420,12 @@ FodyWeavers.xsd
 # Ignore test and tmp files when tracking/pushing
 tmp
 core
-test
-test_*
+tests
 angstrom_fire_output
 
-# macOS
+# macOS Finder custom visual attributes, 
 .DS_Store
 
-# Bash Automation
-nohup.out
-
-# # Keep the FWI runner regression checks in version control.
+# Keep the FWI runner regression checks in version control.
 # !tests/fwi/test_runner_restart.py
 # !tests/fwi/test_runner_compute.py
-
-tests/fwi/test_validate_fwi_modis.py

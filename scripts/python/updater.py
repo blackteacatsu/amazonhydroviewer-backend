@@ -10,34 +10,24 @@ from __future__ import annotations
 from pathlib import Path
 from git import Repo
 from datetime import datetime
-from dask.diagnostics import ProgressBar
-from dask.distributed import Client, LocalCluster
 
 import argparse
 import os
-import dask
 import sys
 
 
+# Import the new src tree, never a leftover 
+# repository-root modules directory.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SRC = REPO_ROOT / 'src'
+if not SRC.is_dir():
+    raise RuntimeError(f'Missing source tree: {SRC}')
+sys.path.insert(0, str(SRC))
 
 import modules.utils as utils
 import modules.data_subsampler as subsampler 
 import modules.get_zonal_stats as zonal
 import modules.get_prob_fcst as prob
-
-
-
-# dask.config.set({
-#     ""
-# })
-
-# cluster = LocalCluster(
-#     n_workers=4,
-#     threads_per_worker=4
-# )
-
-# Current working directory
-CWD = Path(os.getcwd())
 
 # Variable definitions with both long & short names
 LIST_OF_VARIABLES = {
@@ -56,26 +46,21 @@ DATA_BOUNDS = {'lon_min': -81.975,
                'lon_max': -49.025, 
                'lat_min': -20.975, 
                'lat_max': 5.975}
-# DATA_BOUNDS = [
-#     -81.975,
-#     -49.025,
-#     -20.975,
-#     5.975
-# ]
+
 
 # Data directory
 SURFACE_MODEL_DIR = r"/mnt/vast/prakrut/backup/lis_runs/malaria_amazon/forecast/monthly"
 
-# 
-RIVER_NETWORK_FILE = CWD / "static" / "annual_mean_50cumecs_river_network.nc"
+# River Network file used for clipping/filtering
+RIVER_NETWORK_FILE = REPO_ROOT / "static" / "annual_mean_50cumecs_river_network.nc"
 
 # AOI shapes - labelled with PFAF_IDs 
-AOI_MASK_POLYGON = CWD / "static" / "hybas_sa_lev05_aoi.geojson"
+AOI_MASK_POLYGON = REPO_ROOT / "static" / "hybas_sa_lev05_aoi.geojson"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--cwd", type=Path, default=CWD)
+    parser.add_argument("--cwd", type=Path, default=REPO_ROOT)
     parser.add_argument("--surface-model-dir", type=Path, default=Path(SURFACE_MODEL_DIR), required=True)
     parser.add_argument("--hcst-start-year", type=int, default=2001)
     parser.add_argument("--hcst-end-year", type=int, default=2020)
@@ -86,6 +71,8 @@ def parse_args() -> argparse.Namespace:
         metavar=("YEAR", "MONTH"),
         help="Forecast initialization month; defaults to the latest available.",
     )
+    parser.add_argument("--dask-workers", type=int, default=0)
+    parser.add_argument("--worker-memory", default="4GiB", help="Memory limit per Dask worker; stay within job allocation")
     parser.add_argument("--variables", nargs="+", choices=LIST_OF_VARIABLES, default=list(LIST_OF_VARIABLES))
     parser.add_argument(
         "--data-bounds", 
@@ -197,13 +184,18 @@ def main() -> None:
 if __name__ == "__main__":
 
     args = parse_args()
+    if args.dask_workers:
+        from dask.distributed import Client, LocalCluster
 
-    cluster_config = {
-        'n_workers' : 4,
-        'threads_per_worker': 1,
-        '':'',
-    }
-
-    with LocalCluster() as cluster:
-        with Client(cluster):
-            main(args)
+        # Local worker use this node only;
+        with LocalCluster(
+            n_workers=args.dask_workers,
+            threads_per_worker=1,
+            processes=True,
+            memory_limit=args.worker_memory,
+            dashboard_address=None
+        ) as cluster:
+            with Client(cluster):
+                main(args)
+    else:
+        main(args)
