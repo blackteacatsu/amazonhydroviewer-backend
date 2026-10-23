@@ -52,10 +52,10 @@ DATA_BOUNDS = {'lon_min': -81.975,
 SURFACE_MODEL_DIR = r"/mnt/vast/prakrut/backup/lis_runs/malaria_amazon/forecast/monthly"
 
 # River Network file used for clipping/filtering
-RIVER_NETWORK_FILE = REPO_ROOT / "static" / "annual_mean_50cumecs_river_network.nc"
+RIVER_NETWORK_FILE = REPO_ROOT / "src" / "static" / "annual_mean_50cumecs_river_network.nc"
 
 # AOI shapes - labelled with PFAF_IDs 
-AOI_MASK_POLYGON = REPO_ROOT / "static" / "hybas_sa_lev05_aoi.geojson"
+AOI_MASK_POLYGON = REPO_ROOT / "src" / "static" / "hybas_sa_lev05_aoi.geojson"
 
 
 def parse_args() -> argparse.Namespace:

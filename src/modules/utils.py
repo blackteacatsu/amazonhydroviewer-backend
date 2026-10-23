@@ -256,7 +256,7 @@ def initialize_working_cond(
     zonal_avg_climatology_dir = (
         working_directory / "get_zonal_averages_climatology"
     )
-    climatology_cache_dir = zonal_avg_climatology_dir / "tmp"
+    climatology_cache_dir = Path("/mnt/vast/ksu/hydroviewer_climatology_cache")
     zonal_avg_climatology_tab_dir = zonal_avg_climatology_dir / "zmean"
 
     for directory in (

@@ -23,12 +23,12 @@ python_bin="${PYTHON:-python}"
 
 mkdir -p logs
 
-nohup "$python_bin" "$runner" \
+"$python_bin" "$runner" \
     --surface-model-dir "$fcst_dir" \
     --hcst-start-year 2001 \
     --hcst-end-year 2020 \
-    --fcst-init-date 2022 08 \
     --dask-workers 4 \
+    --worker-memory "32GiB" \
     > ./logs/forecast_update_ver_${current_date_time}.log 2>&1 
 
 # push new data to github data repo
