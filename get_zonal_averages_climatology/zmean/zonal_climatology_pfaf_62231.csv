@@ -1,7 +1,7 @@
 pfaf_id,month,Rainf_tavg,Qair_f_tavg,Qs_tavg,Evap_tavg,Tair_f_tavg,SoilMoist_inst_lvl_0,SoilMoist_inst_lvl_1,SoilMoist_inst_lvl_2,SoilMoist_inst_lvl_3,SoilTemp_inst_lvl_0,SoilTemp_inst_lvl_1,SoilTemp_inst_lvl_2,SoilTemp_inst_lvl_3,Streamflow_tavg
-62231,1,,,,,,,,,,,,,,75786.92
-62231,2,,,,,,,,,,,,,,95801.13
-62231,9,,,,,,,,,,,,,,138169.08
-62231,10,,,,,,,,,,,,,,89405.375
-62231,11,,,,,,,,,,,,,,53536.22
-62231,12,,,,,,,,,,,,,,58772.105
+62231,1,,,,,,,,,,,,,,46215.77
+62231,2,,,,,,,,,,,,,,54337.76
+62231,3,,,,,,,,,,,,,,69843.1
+62231,10,,,,,,,,,,,,,,104696.414
+62231,11,,,,,,,,,,,,,,72264.89
+62231,12,,,,,,,,,,,,,,49584.914

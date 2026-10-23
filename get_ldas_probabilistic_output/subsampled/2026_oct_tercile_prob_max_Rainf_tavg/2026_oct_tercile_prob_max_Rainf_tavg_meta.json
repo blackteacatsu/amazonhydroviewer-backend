@@ -1,5 +1,5 @@
 {
-  "stem": "2026_sep_tercile_prob_max_Streamflow_tavg",
+  "stem": "2026_oct_tercile_prob_max_Rainf_tavg",
   "zooms": [
     4,
     5,
@@ -9,7 +9,7 @@
     9
   ],
   "dtype": "float32",
-  "files": "2026_sep_tercile_prob_max_Streamflow_tavg_pyramid.npz",
+  "files": "2026_oct_tercile_prob_max_Rainf_tavg_pyramid.npz",
   "grain_map": {
     "4": 2,
     "5": 1,

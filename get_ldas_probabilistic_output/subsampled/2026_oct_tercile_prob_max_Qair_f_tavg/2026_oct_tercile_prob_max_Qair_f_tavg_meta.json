@@ -1,5 +1,5 @@
 {
-  "stem": "2026_sep_tercile_prob_max_SoilMoist_inst",
+  "stem": "2026_oct_tercile_prob_max_Qair_f_tavg",
   "zooms": [
     4,
     5,
@@ -9,7 +9,7 @@
     9
   ],
   "dtype": "float32",
-  "files": "2026_sep_tercile_prob_max_SoilMoist_inst_pyramid.npz",
+  "files": "2026_oct_tercile_prob_max_Qair_f_tavg_pyramid.npz",
   "grain_map": {
     "4": 2,
     "5": 1,
@@ -26,6 +26,5 @@
   },
   "time_len": 6,
   "category_len": 3,
-  "profile_dim": "SoilMoist_profiles",
-  "profile_length": 4
+  "profile_dim": null
 }
