@@ -1,0 +1,25 @@
+name: analytics
+channels:
+  - defaults
+dependencies:
+  - ipykernel
+  - conda-libmamba-solver
+  - pip
+  - xarray
+  - conda-anaconda-telemetry
+  - python=3.12
+  - setuptools
+  - geopandas
+  - menuinst
+  - conda=25.1.1
+  - conda-anaconda-tos[version='>=0.1.2']
+  - conda-content-trust
+  - wheel
+  - anaconda-anon-usage
+  - notebook
+  - pyzmq[version='<25']
+  - jupyter_client[version='<8']
+  - gdal
+  - libgdal-hdf4
+  - libgdal
+  - rioxarray

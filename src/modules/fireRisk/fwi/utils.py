@@ -121,17 +121,17 @@ def select_dates(
 
 def prepare_weather(
         day : xr.Dataset,
-        variables : tuple[str]
-) -> tuple[
-    xr.DataArray,
-    xr.DataArray,
-    xr.DataArray,
-    xr.DataArray, 
-    xr.DataArray,
-]:
+        variables : tuple[str],
+        rh_policy: str = "cap",
+        return_diagnostics: bool = False,
+) -> tuple:
     """
-    Normalize the verified daily forcing. No implicit unit defaults.
+    Normalize daily forcing; cap finite supersaturation by default for FWI.
+    Missing or physically invalid inputs remain masked. Set rh_policy="mask"
+    to reproduce the prior strict RH filter. Optional diagnostics retain raw RH.
     """
+    if rh_policy not in {'cap', 'mask'}:
+        raise ValueError("rh_policy must be 'cap' or 'mask'")
     units = {n: stdize_units(day[n]) for n in variables}
 
     # Existing helpers convert temperature, q and p; reject missing units above.
@@ -146,13 +146,26 @@ def prepare_weather(
         raise ValueError(f'Unsupported wind/rain units: {units}')
     W = (day.Wind_f_tavg.astype('float64') * wind_scales[units['Wind_f_tavg']]).assign_attrs(units='km h-1')
     R = (day.Rainf_tavg.astype('float64') * rain_scales[units['Rainf_tavg']]).assign_attrs(units='mm')
+    
+    # Filter for data, first check for finite values 
+    # then restrict variables bound on case-to-case basis
     finite = np.isfinite(day[list(variables)].to_array()).all('variable')
-    valid = (finite & np.isfinite(RH) & (RH >= 0) & (RH <= 100)
+    valid = (finite & np.isfinite(RH) & (RH >= 0)
              & (W >= 0) & (R >= 0) & (day.Qair_f_tavg >= 0) & (day.Psurf_f_tavg > 0))
     # Specific humidity is a fraction, irrespective of its source units.
     q = day.Qair_f_tavg / (1000 if units['Qair_f_tavg'] in {'g/kg', 'gkg-1', 'gkg^-1'} else 1)
     valid = valid & (q < 1)
-    return T, RH, W, R, valid
+    # RH is derived from daily-mean T/q/p. Reject invalid source values first;
+    # cap finite supersaturation for FWI rather than permanently losing history.
+    raw_rh = RH.copy(deep=False).rename('relative_humidity_raw')
+    if rh_policy == 'mask':
+        valid = valid & (raw_rh <= 100)
+    capped = valid & (raw_rh > 100) & (rh_policy == 'cap')
+    RH = raw_rh.clip(max=100) if rh_policy == 'cap' else raw_rh
+    result = (T, RH, W, R, valid)
+    if return_diagnostics:
+        return (*result, {'relative_humidity_raw': raw_rh, 'rh_capped': capped})
+    return result
 
 
 def write_netcdf(dataset:xr.Dataset, path:Path) -> None:

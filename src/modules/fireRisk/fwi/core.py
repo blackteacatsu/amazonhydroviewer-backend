@@ -198,9 +198,12 @@ def get_dmc(
     da_day_lengths: xr.DataArray,
 ) -> xr.DataArray:
     """Advance DMC one day; day_lengths is effective day length Le in hours.
-
     Temperature is degC, RH percent and rainfall 24-hour mm. DMC >= 0 has no
     fixed upper bound. Le must be finite and in [0, 24].
+
+    Parameters:
+
+
     """
     # Preparation A-C: include Day Length Factor (Le) and allow DMC above 101.
     (da_Tair_f_tavg, da_QRair_tavg, da_Rainf_tavg,
@@ -211,12 +214,15 @@ def get_dmc(
         (da_dmc_previous, 0, None, INITIAL_DMC),
         (da_day_lengths, 0, 24, 12.0),
     )
+
     # Step 1 / Eq. (11): no effective rain below or at the 1.5 mm threshold.
     da_Rainf_mask = da_Rainf_tavg > 1.5
     da_Rainf_eff = xr.where(da_Rainf_mask, 0.92 * da_Rainf_tavg - 1.27, 0.0)
+
     # Step 2 / Eq. (12): keep log(M_o - 20) to avoid losing tiny moisture
     # differences when adding/subtracting 20 for very high DMC.
     da_log_Moist_excess = 5.6348 - da_dmc_previous / 43.43
+
     # Step 3 / Eqs. (13a-c): logarithms below 33 are unused; make them safe.
     da_log_dmc = np.log(da_dmc_previous.clip(min=33))
     da_b = xr.where(
@@ -225,6 +231,7 @@ def get_dmc(
         xr.where(da_dmc_previous <= 65,
                  14 - 1.3 * da_log_dmc, 6.2 * da_log_dmc - 17.2),
     )
+    
     # Steps 4-5 / Eqs. (14-15): logaddexp(a,b) = log(exp(a)+exp(b)).
     # This is the published moisture sum in log space, not a new equation.
     da_added_moisture = 1000 * da_Rainf_eff / (48.77 + da_b * da_Rainf_eff)
@@ -233,9 +240,11 @@ def get_dmc(
     da_dmc_aft_rain = (244.72 - 43.43 * da_log_Moist_aft_rain).clip(min=0)
     # Dry cells keep yesterday's state exactly, discarding the placeholder branch.
     da_dmc_aft_rain = xr.where(da_Rainf_mask, da_dmc_aft_rain, da_dmc_previous)
+    
     # Step 6 / Eq. (16): floor T at -1.1; 1.894e-6 = 1.894 * 10**(-6).
     da_K = (1.894e-6 * (da_Tair_f_tavg.clip(min=-1.1) + 1.1)
             * (100 - da_QRair_tavg) * da_day_lengths)
+    
     # Step 7 / Eq. (17): drying is added on both wet and dry days.
     return _result(da_dmc_aft_rain + 100 * da_K, da_valid, "dmc", "Duff Moisture Code")
 
@@ -261,6 +270,7 @@ def get_drought_code(
     # Step 1 / Eq. (18): r_d = 0.83*r_o - 1.27 only above 2.8 mm.
     da_Rainf_mask = da_Rainf_tavg > 2.8
     da_Rain_eff = xr.where(da_Rainf_mask, 0.83 * da_Rainf_tavg - 1.27, 0.0)
+
     # Steps 2-4 / Eqs. (19-21): Q_o=800*exp(-DC/400), Q_r=Q_o+3.937*r_d.
     # Evaluate log(Q_r) directly to avoid underflow at large previous DC.
     da_log_Qo = np.log(800.0) - da_dc_previous / 400
@@ -268,16 +278,18 @@ def get_drought_code(
     da_log_Qr = np.logaddexp(da_log_Qo, da_log_rain)
     da_dc_aft_rain = (400 * (np.log(800.0) - da_log_Qr)).clip(min=0)
     da_dc_aft_rain = xr.where(da_Rainf_mask, da_dc_aft_rain, da_dc_previous)
+
     # Step 5 / Eq. (22): use the original T with its own -2.8 floor; V >= 0.
     da_Pevap_tavg = (
         0.36 * (da_Tair_f_tavg.clip(min=-2.8) + 2.8) + da_day_lengths
     ).clip(min=0)
+
     # Step 6 / Eq. (23): add half the potential evapotranspiration.
     return _result(da_dc_aft_rain + 0.5 * da_Pevap_tavg, da_valid, "dc", "Drought Code")
 
 
 def ffmc_to_moisture(da_ffmc: xr.DataArray) -> xr.DataArray:
-    """Convert today's FFMC to fine-fuel moisture (%) for get_isi, Eq. (1).
+    """Convert today's FFMC to fine-fuel moisture (%) for Initial Spread Index, Eq. (1).
 
     get_isi's existing moisture-input API is retained. Never pass FFMC directly
     as its second argument; convert it here first.

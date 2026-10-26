@@ -54,7 +54,7 @@ def parse_args(argv=None):
     p.add_argument('--output-dir', type=Path, required=True)
     p.add_argument('--restart-root', type=Path, help='Output tree for preceding daily FWI file; default to `output_dir.`')
     p.add_argument('--dask-workers', type=int, default=0, help='Optional local worker processes (0 runs NumPy directly).')
-    p.add_argument('--worker-memory', default='4GiB', help='Memory limit per Dask worker; stay within your job allocation.')
+    p.add_argument('--worker-memory', default='4GiB', help='Memory limit per Dask worker; stay within job allocation.')
     p.add_argument('--chunk-size', type=int, default=270, help='Spatial chunk edge length for Dask.')
 
     # Define constants used for initializing FWI runs before the first day of available data.
@@ -65,6 +65,8 @@ def parse_args(argv=None):
     p.add_argument('--initial-dmc', type=float, default=6.0)
     p.add_argument('--initial-dc', type=float, default=15.0)
 
+    p.add_argument('--rh-policy', choices=('cap', 'mask'), default='cap',
+                   help='Cap finite RH above 100% (default), or reproduce the strict masking policy.')
     p.add_argument('--overwrite', action='store_true', help='Replace this run’s output files.')
     args = p.parse_args(argv)
     if args.dask_workers < 0 or args.chunk_size < 1:
@@ -101,6 +103,11 @@ def run(args:argparse.Namespace) -> dict:
         initial_path = initial_path.expanduser().resolve()
         if not initial_path.is_file():
             raise FileNotFoundError(f'Missing checkpoint file at path {initial_path}. ')
+    if initial_path is not None:
+        with xr.open_dataset(initial_path) as previous:
+            previous_policy = previous.attrs.get('rh_policy', 'mask')
+        if previous_policy != args.rh_policy:
+            raise ValueError('Restart RH policy differs from this run. Recompute from initialization into a new output directory.')
     selected = xr.Dataset(coords={'time': times})
     # Prepare one daily output filename for every input date.
     # Name the JSON summary with the first and last day processed.
@@ -117,6 +124,8 @@ def run(args:argparse.Namespace) -> dict:
         'source_files': json.dumps([str(path) for path in inputs]),
         'algorithm': 'Van Wagner and Pickett 1985 written equations',
         'sampling': 'daily_mean_approximation',
+        'rh_policy': args.rh_policy,
+        'rh_policy_description': 'Finite nonnegative RH capped at saturation after source checks; raw RH retained' if args.rh_policy == 'cap' else 'Reject RH outside 0–100%',
         'rainfall_interval_assumption': '24-hour mean rate associated with each date label; no verified noon-to-noon bounds',
         'day_length_scheme': 'original_Canadian_month_tables_not_regionally_calibrated',
         'initialization': 'previous_daily_output' if initial_path else 'assumed_constants_before_first_day',
@@ -159,7 +168,8 @@ def run(args:argparse.Namespace) -> dict:
         if args.dask_workers:
             dims = daily.Tair_f_tavg.dims
             daily = daily.chunk({dim: args.chunk_size for dim in dims})
-        T, H, W, R, valid = utils.prepare_weather(daily, VARIABLES)
+        T, H, W, R, valid, diagnostics = utils.prepare_weather(
+            daily, VARIABLES, rh_policy=args.rh_policy, return_diagnostics=True)
         locations = {n: daily[n] for n in ['lat', 'lon'] if n in daily}
         # Require the spatial dimensions and sizes to match the first day.
         if dict(T.sizes) != dict(first_day.Tair_f_tavg.sizes):
@@ -197,6 +207,8 @@ def run(args:argparse.Namespace) -> dict:
         computed = xr.Dataset(dict(zip(CODES, fields)))
         computed['forcing_valid'] = valid
         computed['state_valid'] = active
+        computed['relative_humidity_raw'] = diagnostics['relative_humidity_raw']
+        computed['rh_capped'] = diagnostics['rh_capped']
         computed = computed.compute()
         fields = [computed[name] for name in CODES]
         ffmc, dmc, dc, isi, bui, fwi, dsr = fields
@@ -210,6 +222,8 @@ def run(args:argparse.Namespace) -> dict:
         result = xr.Dataset(dict(zip(CODES, fields))).assign_coords(locations)
         result['forcing_valid'] = valid.astype('int8')
         result['state_valid'] = active.astype('int8')
+        result['relative_humidity_raw'] = computed.relative_humidity_raw
+        result['rh_capped'] = computed.rh_capped.astype('int8')
         result = result.expand_dims(time=[selected.time.values[index]])
         result.attrs = {**metadata, 'valid_date': str(date), 'Le': float(le), 'Lf': float(lf)}
         utils.write_netcdf(result, path)
@@ -217,6 +231,7 @@ def run(args:argparse.Namespace) -> dict:
         # Begin the daily summary with its date and count of valid-weather cells.
         record = {
             'date': str(date), 'forcing_valid_cells': int(valid.sum()),
+            'rh_capped_cells': int(computed.rh_capped.sum()),
             'state_valid_cells' : int(active.sum()), 'file' : path.name
         }
         # Visit each named output array.
@@ -242,7 +257,8 @@ if __name__ == '__main__':
     if args.dask_workers:
         from dask.distributed import Client, LocalCluster
 
-        # Local workers use this node only; request CPUs/RAM through the job scheduler first.
+        # Local workers use this node only; 
+        # request CPUs/RAM through the job scheduler first.
         with LocalCluster(n_workers=args.dask_workers, threads_per_worker=1,
                           processes=True, memory_limit=args.worker_memory,
                           dashboard_address=None) as cluster:
