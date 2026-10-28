@@ -114,7 +114,9 @@ def select_dates(
     if 'time' not in dims or len(dims) < 2:
         raise ValueError(f'Expected time and at least one spatial dimension; found {dims}')
     for n in variables:
-        if set(selected[n].dims) != set(dims):
+        # Soil forcing carries one additional vertical dimension; weather does not.
+        expected = set(dims) | ({'SoilMoist_profiles'} if n == 'SoilMoist_inst' else set())
+        if set(selected[n].dims) != expected:
             raise ValueError(f'{n}: forcing dimensions must match temperature')
     return selected, dates
 
