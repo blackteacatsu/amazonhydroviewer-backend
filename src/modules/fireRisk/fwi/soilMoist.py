@@ -105,17 +105,19 @@ def preprocess_saturation(
         or not np.isfinite(ys).all()
         or dx == 0
         or dy == 0
-        or not np.allclose(np.diff(xs), dx, atol=1e-5, rtol=0)
-        or not np.allclose(np.diff(ys), dy, atol=1e-5, rtol=0)
+	or not (np.all(np.diff(xs) > 0) or np.all(np.diff(xs) < 0))
+	or not (np.all(np.diff(ys) > 0) or np.all(np.diff(ys) < 0))
+        or not np.allclose(np.diff(xs), dx, atol=1e-4, rtol=0)
+        or not np.allclose(np.diff(ys), dy, atol=1e-4, rtol=0)
     ):
         raise ValueError('Require a regular geographic LDAS grid')
     
     transform = Affine(dx, 0, float(xs[0]) - dx / 2, 0, dy, float(ys[0]) - dy / 2)
 
-    total = np.zeros(lat.shape, dtype='float64')
+    total = np.zeros(shape, dtype='float64')
 
     for path, weight in zip(paths, (5, 10, 15, 10)):
-        destination = np.full(shape, dtype='float64')
+        destination = np.full(shape, np.nan, dtype='float64')
 
         with rasterio.open(path) as source:
             if source.crs is None or source.count != 1:
