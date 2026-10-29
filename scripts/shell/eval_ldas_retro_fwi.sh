@@ -6,12 +6,10 @@
 # START_YEAR/END_YEAR select a year range; later years require the preceding daily output.
 
 # Stop on a failed command, an unset variable, or a failure anywhere in a pipeline.
-set -eo pipefail
+set -eou pipefail
 
-source /home/kris/miniconda3/etc/profile.d/conda.sh
+source /home/local/WIN/qsu4/miniconda3/etc/profile.d/conda.sh
 conda activate analytics
-
-set -u
 
 # This script lives in scripts/shell; the Python runner lives in scripts/python.
 # Resolve from the script's location rather than your terminal's working directory.
@@ -21,7 +19,7 @@ runner="$scripts_dir/python/get_fireW_index.py"
 
 # Read-only annual input archives. ARCHIVE_DIR can override this default.
 archive_dir="${ARCHIVE_DIR:-/mnt/vast/prakrut/backup/lis_runs/malaria_amazon/retrospective}"
-output_dir="${OUTPUT_DIR:-/mnt/vast/ksu/amazon_wildfire/lis_fiw}"
+output_dir="${OUTPUT_DIR:-/mnt/vast/ksu/fwi_retrospective_amazon/daily}"
 work_dir="${WORK_DIR:-$output_dir/.work}" # Temporary annual extraction folders; use node-local scratch.
 
 # Use the active environment's Python, or an explicit interpreter supplied via PYTHON.
@@ -30,7 +28,7 @@ python_bin="${PYTHON:-python}"
 # A complete run of retrospective FWI covers 2001–2025; 
 # use START_YEAR to resume at a completed year boundary.
 start_year="${START_YEAR:-2001}"
-end_year="${END_YEAR:-2001}" # <= change this for validation runs
+end_year="${END_YEAR:-2025}" # <= change this to the intended interval. (Full retrospect period: 2001-2025)
 
 # Validate settings before creating directories or extracting large archives.
 [[ "$start_year" =~ ^[0-9]{4}$ && "$end_year" =~ ^[0-9]{4}$ ]] || {
@@ -74,6 +72,7 @@ for ((year=start_year; year<=end_year; year++)); do
         --input-dir "$batch/outputs/retrospective/SURFACEMODEL" \
         --output-dir "$output_dir/$year" \
         --restart-root "$output_dir" \
+	--overwrite \
         "${init_args[@]}" "$@"
 
     # Reached only after a successful Python run. Delete this temporary extraction;
