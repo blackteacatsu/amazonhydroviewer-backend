@@ -66,7 +66,11 @@ def load_saturation(path, day: xr.Dataset) -> xr.DataArray:
     return sat.reset_coords(drop=True)
 
 
-def preprocess_saturation(paths, day: xr.Dataset, scale: float = 0.0001) -> xr.Dataset:
+def preprocess_saturation(
+        paths, 
+        template: xr.Dataset, 
+        scale: float = 0.0001
+) -> xr.Dataset:
     """Stream four GeoTIFFs onto a regular LDAS grid, then depth-average.
 
     Rasterio reads source bands in windows, avoiding global arrays in memory.
@@ -78,41 +82,87 @@ def preprocess_saturation(paths, day: xr.Dataset, scale: float = 0.0001) -> xr.D
 
     if len(paths) != 4 or not np.isfinite(scale) or scale <= 0:
         raise ValueError('Require four WCsat rasters and a positive scale')
-    lat, lon = day.lat, day.lon
-    if lat.ndim != 2 or lon.dims != lat.dims:
-        raise ValueError('Require LIS 2-D lat/lon arrays on the same regular grid')
-    ys, xs = lat.values[:, 0], lon.values[0, :]
+    lat, lon = template.lat, template.lon
+    
+    if lat.ndim != 1 or lon.ndim != 1 :
+        raise ValueError('Require LIS 1-D lat/lon arrays')
+    
+    spatial_dims = (lat.dims[0], lon.dims[0])
+    ys = np.asanyarray(lat.values, dtype='float64')
+    xs = np.asanyarray(lon.values, dtype="float64")
+    shape = (len(ys), len(xs))
+
     if min(len(xs), len(ys)) < 2:
         raise ValueError('Grid must have at least two rows and columns')
+    
     # Endpoint spacing avoids accumulating float32 coordinate rounding errors.
-    dx = float((float(xs[-1]) - float(xs[0])) / (len(xs) - 1))
-    dy = float((float(ys[-1]) - float(ys[0])) / (len(ys) - 1))
-    if dx == 0 or dy == 0 or not (
-        np.allclose(lon, xs[None, :], atol=1e-5, rtol=0)
-        and np.allclose(lat, ys[:, None], atol=1e-5, rtol=0)
-        and np.allclose(np.diff(xs), dx, atol=1e-5, rtol=0)
-        and np.allclose(np.diff(ys), dy, atol=1e-5, rtol=0)
+    dx = float((xs[-1] - xs[0]) / (len(xs) - 1))
+    dy = float((ys[-1] - ys[0]) / (len(ys) - 1))
+
+    # Allow float32 coordinate rounding while requiring regular spacing 
+    if (
+        not np.isfinite(xs).all()
+        or not np.isfinite(ys).all()
+        or dx == 0
+        or dy == 0
+        or not np.allclose(np.diff(xs), dx, atol=1e-5, rtol=0)
+        or not np.allclose(np.diff(ys), dy, atol=1e-5, rtol=0)
     ):
         raise ValueError('Require a regular geographic LDAS grid')
+    
     transform = Affine(dx, 0, float(xs[0]) - dx / 2, 0, dy, float(ys[0]) - dy / 2)
+
     total = np.zeros(lat.shape, dtype='float64')
+
     for path, weight in zip(paths, (5, 10, 15, 10)):
-        destination = np.full(lat.shape, np.nan, dtype='float64')
+        destination = np.full(shape, dtype='float64')
+
         with rasterio.open(path) as source:
             if source.crs is None or source.count != 1:
                 raise ValueError(f'{path}: require a single-band georeferenced raster')
-            reproject(rasterio.band(source, 1), destination,
-                      src_nodata=source.nodata, dst_transform=transform,
-                      dst_crs='EPSG:4326', dst_nodata=np.nan,
-                      resampling=Resampling.average, warp_mem_limit=128)
+            
+            reproject(
+                rasterio.band(source, 1),
+                destination,
+                src_nodata=source.nodata, 
+                dst_transform=transform,
+                dst_crs='EPSG:4326', 
+                dst_nodata=np.nan,
+                resampling=Resampling.average, 
+                warp_mem_limit=128
+            )
+        
         # Invalid/missing depth layers propagate instead of changing depth weights.
         layer = destination * scale
         layer[(layer <= 0) | (layer > 1) | ~np.isfinite(layer)] = np.nan
         total += weight * layer / 40
-    coords = {dim: day.coords[dim] for dim in lat.dims if dim in day.coords}
-    result = xr.Dataset({'SM_sat': xr.DataArray(total, dims=lat.dims, coords=coords,
-                         attrs={'units': 'm3 m-3', 'long_name': '0–40 cm saturated volumetric soil moisture'})})
+    
+    coords = {
+        dim: template.coords[dim] 
+        for dim in spatial_dims
+        if dim in template.coords
+    }
+
+    result = xr.Dataset(
+        {
+            'SM_sat': xr.DataArray(
+                total, 
+                dims=spatial_dims, 
+                coords=coords,
+                attrs={
+                    'units': 'm3 m-3', 
+                    'long_name': '0–40 cm saturated volumetric soil moisture'
+                }
+            )
+        }
+    )
+    
     result['lat'], result['lon'] = lat, lon
-    result.attrs.update(soil_depth_cm='0-40', source='HiHydroSoil v2.0 WCsat',
-                        resampling='average of valid contributing pixels', source_scale=scale)
+    
+    result.attrs.update(
+        soil_depth_cm='0-40', 
+        source='HiHydroSoil v2.0 WCsat',
+        resampling='average of valid contributing pixels', source_scale=scale
+    )
+
     return result
