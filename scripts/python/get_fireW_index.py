@@ -27,7 +27,7 @@ if not SRC.is_dir():
 sys.path.insert(0, str(SRC))
 
 from modules.fireRisk import angstrom
-from modules.fireRisk.fwi import core, utils
+from modules.fireRisk.fwi import core, utils, soilMoist
 
 # Define variables short name used for calculating FwI
 VARIABLES = (
@@ -67,8 +67,13 @@ def parse_args(argv=None):
 
     p.add_argument('--rh-policy', choices=('cap', 'mask'), default='cap',
                    help='Cap finite RH above 100% (default), or reproduce the strict masking policy.')
+    p.add_argument('--dc-method', choices=('SoilMoist_inst', 'original'), default='original',
+                   help='Specify the drought code method used, the moisture equivalent originally used in 1987 (default)')
+    p.add_argument('--soil-saturation', type=Path, help='Preprocessed SM_sat NetCDF on the LDAS grid, depth 0–40 cm.')
     p.add_argument('--overwrite', action='store_true', help='Replace this run’s output files.')
     args = p.parse_args(argv)
+    if (args.dc_method == 'SoilMoist_inst') != (args.soil_saturation is not None):
+        p.error('--dc-method SoilMoist_inst requires --soil-saturation; original does not use it')
     if args.dask_workers < 0 or args.chunk_size < 1:
         p.error('Require nonnegative --dask-workers and positive --chunk-size')
     initials = (args.initial_ffmc, args.initial_dmc, args.initial_dc)
@@ -87,14 +92,18 @@ def run(args:argparse.Namespace) -> dict:
     # Inspect inputs and obtain sorted (timestamp, file path, record index) tuples; 
     # (reject time gaps/duplicates)
     # Collect the original timestamps; these retain their time of day.
-    inventory_rows = utils.inventory(args.input_dir, VARIABLES)
+    soil_method = args.dc_method == 'SoilMoist_inst'
+    input_variables = VARIABLES + (('SoilMoist_inst',) if soil_method else ())
+    inventory_rows = utils.inventory(args.input_dir, input_variables)
     times = np.array([row[0] for row in inventory_rows])
     dates = times.astype('datetime64[D]')
     inputs = list(dict.fromkeys(row[1] for row in inventory_rows))
 
     # Load the first day to establish the spatial grid & source metadata.
     # Build YYYYMMDD for the day immediately before this batch, used to find its checkpoints.
-    first_day = utils.read_day(inventory_rows[0], VARIABLES)
+    first_day = utils.read_day(inventory_rows[0], input_variables)
+    saturation = soilMoist.load_saturation(args.soil_saturation, first_day) if soil_method else None
+    saturation_hash = hashlib.sha256(saturation.values.tobytes()).hexdigest() if soil_method else ''
     previous_date = str(dates[0] - np.timedelta64(1, 'D')).replace('-', '')
     # With --initialize use predefined constant; 
     # otherwise choose an explicit checkpoint or the expected preceding-day file
@@ -106,6 +115,10 @@ def run(args:argparse.Namespace) -> dict:
     if initial_path is not None:
         with xr.open_dataset(initial_path) as previous:
             previous_policy = previous.attrs.get('rh_policy', 'mask')
+            if previous.attrs.get('dc_method', 'original') != args.dc_method:
+                raise ValueError('Restart drought-code method differs from this run')
+            if soil_method and previous.attrs.get('soil_saturation_sha256') != saturation_hash:
+                raise ValueError('Restart saturation field differs from this run')
         if previous_policy != args.rh_policy:
             raise ValueError('Restart RH policy differs from this run. Recompute from initialization into a new output directory.')
     selected = xr.Dataset(coords={'time': times})
@@ -122,7 +135,7 @@ def run(args:argparse.Namespace) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
     metadata = {
         'source_files': json.dumps([str(path) for path in inputs]),
-        'algorithm': 'Van Wagner and Pickett 1985 written equations',
+        'algorithm': 'Van Wagner and Pickett 1985 with Yang 2015 soil-moisture DC' if soil_method else 'Van Wagner and Pickett 1985 written equations',
         'sampling': 'daily_mean_approximation',
         'rh_policy': args.rh_policy,
         'rh_policy_description': 'Finite nonnegative RH capped at saturation after source checks; raw RH retained' if args.rh_policy == 'cap' else 'Reject RH outside 0–100%',
@@ -132,6 +145,11 @@ def run(args:argparse.Namespace) -> dict:
         'initial_state_file': str(initial_path) if initial_path else '',
         'initial_ffmc': args.initial_ffmc, 'initial_dmc': args.initial_dmc, 'initial_dc': args.initial_dc, 
         'initial_state_date': str(dates[0] - np.timedelta64(1, 'D')),
+        'dc_method': args.dc_method,
+        'dc_equation': '400 ln(SM_sat / SM), Yang et al. 2015, adapted to 0–40 cm' if soil_method else 'original',
+        'soil_saturation_file': str(args.soil_saturation.resolve()) if soil_method else '',
+        'soil_saturation_sha256': saturation_hash,
+        'soil_helper_sha256': hashlib.sha256(Path(soilMoist.__file__).read_bytes()).hexdigest(),
         'core_sha256': hashlib.sha256(Path(core.__file__).read_bytes()).hexdigest(),
         'runner_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         'humidity_helper_sha256': hashlib.sha256(Path(angstrom.__file__).read_bytes()).hexdigest(),
@@ -143,6 +161,10 @@ def run(args:argparse.Namespace) -> dict:
     if initial_path:
         for name in ('initial_ffmc', 'initial_dmc', 'initial_dc'):
             metadata.pop(name)
+    if soil_method:
+        metadata.pop('initial_dc', None)
+        metadata['soil_depth_cm'] = '0-40'
+        metadata['soil_invalid_policy'] = 'Mask missing, nonpositive, or above-saturation moisture; FFMC/DMC history remains invalid after gaps'
     # Inherit projection metadata from source file
     # Visit the source projection, grid origin, and spacing attributes.
     for key in ['MAP_PROJECTION', 'SOUTH_WEST_CORNER_LAT', 'SOUTH_WEST_CORNER_LON', 'DX', 'DY']:
@@ -163,7 +185,7 @@ def run(args:argparse.Namespace) -> dict:
     for index, (date, path) in enumerate(zip(dates, paths)):
         # Keep memory bounded: load five forcings and locations for ONE day.
         # Reuse the already-loaded first day; subsequent calls open, load and close one day at a time.        
-        daily = first_day if index == 0 else utils.read_day(inventory_rows[index], VARIABLES)        
+        daily = first_day if index == 0 else utils.read_day(inventory_rows[index], input_variables)
         # Keep file I/O in the parent process; distribute only the spatial calculations.
         if args.dask_workers:
             dims = daily.Tair_f_tavg.dims
@@ -187,15 +209,27 @@ def run(args:argparse.Namespace) -> dict:
         if moisture_code is None:
             moisture_code = [xr.full_like(T, v, dtype=np.float64).where(valid)
                         for v in [args.initial_ffmc, args.initial_dmc, args.initial_dc]]
-        # Inspect each of the three codes carried from the previous day.
-        for previous in moisture_code:
-            # Required every previous code to be finite; missing history remains masked.
-            active = valid & np.isfinite(previous)
+        # FFMC/DMC always need history. Soil-derived DC itself is memoryless.
+        active = valid.copy()
+        for previous in moisture_code[:2] if soil_method else moisture_code:
+            active = active & np.isfinite(previous)
+        if soil_method:
+            thickness = daily.attrs.get('SOIL_LAYER_THICKNESSES')
+            if thickness is None or not np.allclose(thickness, [10, 30, 60, 100]):
+                raise ValueError('Soil method requires LDAS layer thicknesses 10,30,60,100 cm')
+            sm = soilMoist.avg_soilMoist_wDepth(daily.SoilMoist_inst)
+            soil_dc = soilMoist.get_drought_code(sm, saturation)
+            # Retain the existing conservative gap policy for all carried codes.
+            active = active & np.isfinite(soil_dc)
         le = xr.DataArray(float(day_l_factors.Le.isel(time=index)))
         lf = xr.DataArray(float(day_l_factors.Lf.isel(time=index)))
         ffmc = core.get_ffmc(T, H, W, R, moisture_code[0]).where(active)
         dmc = core.get_dmc(T, H, R, moisture_code[1], le).where(active)
-        dc = core.get_drought_code(T, R, moisture_code[2], lf).where(active)
+
+        if soil_method:
+            dc = soil_dc.where(active)
+        elif args.dc_method == 'original':
+            dc = core.get_drought_code(T, R, moisture_code[2], lf).where(active)
 
         isi = core.get_isi(W, core.ffmc_to_moisture(ffmc)).where(active)
         bui = core.get_bui(dmc, dc).where(active)
@@ -205,6 +239,10 @@ def run(args:argparse.Namespace) -> dict:
         # Evaluate this day's graph once, before validation, statistics, or writing.
         # Carry computed arrays forward so the graph cannot grow across days.
         computed = xr.Dataset(dict(zip(CODES, fields)))
+        if soil_method:
+            computed['soil_moisture_0_40'] = sm
+            computed['soil_moisture_valid'] = np.isfinite(soil_dc)
+            computed['soil_above_saturation'] = np.isfinite(sm) & (sm > saturation)
         computed['forcing_valid'] = valid
         computed['state_valid'] = active
         computed['relative_humidity_raw'] = diagnostics['relative_humidity_raw']
@@ -220,6 +258,9 @@ def run(args:argparse.Namespace) -> dict:
         # Carry today's full-precision moisture codes into the next iteration; do not reinitialize them.
         moisture_code = [ffmc, dmc, dc]  # Full precision; never reset on each date.
         result = xr.Dataset(dict(zip(CODES, fields))).assign_coords(locations)
+        if soil_method:
+            for name in ('soil_moisture_0_40', 'soil_moisture_valid', 'soil_above_saturation'):
+                result[name] = computed[name] if name == 'soil_moisture_0_40' else computed[name].astype('int8')
         result['forcing_valid'] = valid.astype('int8')
         result['state_valid'] = active.astype('int8')
         result['relative_humidity_raw'] = computed.relative_humidity_raw
@@ -234,6 +275,9 @@ def run(args:argparse.Namespace) -> dict:
             'rh_capped_cells': int(computed.rh_capped.sum()),
             'state_valid_cells' : int(active.sum()), 'file' : path.name
         }
+        if soil_method:
+            record['soil_valid_cells'] = int(computed.soil_moisture_valid.sum())
+            record['soil_above_saturation_cells'] = int(computed.soil_above_saturation.sum())
         # Visit each named output array.
         for n, field in zip(CODES, fields):
             values = field.values[np.isfinite(field.values)]
