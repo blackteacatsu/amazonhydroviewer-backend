@@ -244,19 +244,20 @@ def initialize_working_cond(
         f"{fcst_date.year}_{fcst_date.strftime('%b').lower()}"
     )
 
+    cache_dir = Path("/mnt/vast/ksu/.hydroviewer_cache")
     # probabilistic forecast output directory(s)
-    prob_fcst_dir = working_directory / "get_ldas_probabilistic_output"
-    prob_fcst_cache_dir = prob_fcst_dir / "tmp" # tmp zarr files
+    prob_fcst_dir = working_directory / 'dist' / "get_ldas_probabilistic_output"
+    prob_fcst_cache_dir =  cache_dir / "hydroviewer_fcst_cache" # tmp zarr files
     prob_fcst_subsampled_dir = prob_fcst_dir / "subsampled" # final sub-sampled output
 
-    # zonal averaged forecast tabular directory
-    zonal_avg_fcst_tab_dir = working_directory / "get_zonal_averages_fcst"
+    # zonally averaged forecast tabular directory
+    zonal_avg_fcst_tab_dir = working_directory / "dist" / "get_zonal_averages_fcst"
 
     # zonal averaged climatology cache & tabular directory
     zonal_avg_climatology_dir = (
-        working_directory / "get_zonal_averages_climatology"
+        working_directory / "dist" / "get_zonal_averages_climatology"
     )
-    climatology_cache_dir = Path("/mnt/vast/ksu/hydroviewer_climatology_cache")
+    climatology_cache_dir = cache_dir / "hydroviewer_climatology_cache"
     zonal_avg_climatology_tab_dir = zonal_avg_climatology_dir / "zmean"
 
     for directory in (
