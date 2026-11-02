@@ -64,20 +64,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--surface-model-dir", type=Path, default=Path(SURFACE_MODEL_DIR), required=True)
     parser.add_argument("--hcst-start-year", type=int, default=2001)
     parser.add_argument("--hcst-end-year", type=int, default=2020)
-    parser.add_argument(
-        "--fcst-init-date",
-        nargs=2,
-        type=int,
-        metavar=("YEAR", "MONTH"),
+    parser.add_argument("--fcst-init-date", nargs=2, type=int, metavar=("YEAR", "MONTH"),
         help="Forecast initialization month; defaults to the latest available.",
     )
     parser.add_argument("--dask-workers", type=int, default=0)
     parser.add_argument("--worker-memory", default="4GiB", help="Memory limit per Dask worker; stay within job allocation")
     parser.add_argument("--variables", nargs="+", choices=LIST_OF_VARIABLES, default=list(LIST_OF_VARIABLES))
-    parser.add_argument(
-        "--data-bounds", 
-        type=float, 
-        nargs=4, 
+    parser.add_argument("--data-bounds", type=float, nargs=4, 
         default=[
             DATA_BOUNDS["lon_min"],
             DATA_BOUNDS["lon_max"],
@@ -117,6 +110,7 @@ def main() -> None:
                 args.data_bounds
             )
         )
+        
     # Validate repository ownership before initialization performs output cleanup.
     repo = Repo(
         Path(args.cwd).expanduser().resolve(),

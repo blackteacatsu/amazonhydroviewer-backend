@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from pathlib import Path
+# from collections.abc import Sequence
+# from pathlib import Path
 
 import xarray as xr
 import numpy as np
@@ -58,33 +58,52 @@ def get_Pvap(
 ) -> xr.DataArray:
     """Calculate vapour pressure in Pa from specific humidity and pressure.
 
-    Accept kg/kg or g/kg humidity and Pa, hPa/mbar, or kPa pressure.
+    Accept kg/kg or g/kg humidity and Pa, 
+    hPa/mbar, or kPa pressure.
+    
     Shared coordinates must match exactly; missing values propagate.
     """
+    
+    # In order to use the following approximation convert
+    # specific humidity's unit to `gram of water per gram of air`
     humidity_units = _unit_key(da_Qair_f_tavg)
     if humidity_units in {"g/kg", "gkg-1", "gkg^-1"}:
         da_Qair_f_tavg = da_Qair_f_tavg / 1000
     elif humidity_units not in {"kg/kg", "kgkg-1", "kgkg^-1", "1"}:
         raise ValueError(f"Unsupported specific humidity units: {da_Qair_f_tavg.attrs['units']!r}")
-
+    
+    # Similarly, standardize the unit of surface pressure to `Pascal`
     pressure_units = _unit_key(da_Psurf_f_tavg)
     pressure_scales = {"pa": 1, "hpa": 100, "mbar": 100, "mb": 100, "kpa": 1000}
     if pressure_units not in pressure_scales:
         raise ValueError(f"Unsupported pressure units: {da_Psurf_f_tavg.attrs['units']!r}")
     da_Psurf_f_tavg = da_Psurf_f_tavg * pressure_scales[pressure_units]
-    da_Qair_f_tavg, da_Psurf_f_tavg = xr.align(da_Qair_f_tavg, da_Psurf_f_tavg, join="exact", copy=False)
+    
+    # Get the vapour pressure using the ratio 
+    # between the molecular mass of water vapour to dry air 0.622
+    da_Qair_f_tavg, da_Psurf_f_tavg = xr.align(
+        da_Qair_f_tavg, 
+        da_Psurf_f_tavg, 
+        join="exact", 
+        copy=False
+    )
     da_Pvap = (da_Qair_f_tavg * da_Psurf_f_tavg) / (0.622 + 0.378 * da_Qair_f_tavg)
+   
+   #  Result packaging; with new attributes in metadata
     da_Pvap.attrs = {"long_name": "vapour pressure", "units": "Pa"}
+    
     return da_Pvap.rename("Pvap_f_tavg")
 
 
 def get_Psvap(da_Tair_f_tavg: xr.DataArray) -> xr.DataArray:
-    """Calculate saturation vapour pressure over liquid water in Pa.
+    """Calculate Saturation Vapour Pressure over liquid water in Pa.
 
-    Accept Celsius or Kelvin temperature; use the existing Magnus formula.
+    Accept Celsius or Kelvin temperature; use the existing Magnus-Tetens approximation 
+    of the Clausis-Clapeyron equation.
     """
-    da_Tair_f_tavg = _temperature_celsius(da_Tair_f_tavg)
+    da_Tair_f_tavg = _temperature_celsius(da_Tair_f_tavg) 
     da_Psvap = 611 * np.exp((da_Tair_f_tavg * 17.27) / (da_Tair_f_tavg + 237.3))
+    # Result packaging; with new attributes in metadata
     da_Psvap.attrs = {"long_name": "saturation vapour pressure", "units": "Pa"}
     return da_Psvap.rename("Sat_Pvapour_f_tavg")
 
@@ -94,11 +113,23 @@ def get_QRair(
         da_Psurf_f_tavg: xr.DataArray,
         da_Tair_f_tavg: xr.DataArray,
 ) -> xr.DataArray:
-    """Calculate relative humidity (%) over liquid water, without clipping."""
+    """Calculate relative humidity (%) over liquid water, without clipping.
+    
+    Argument:
+        da_Qair_f_tavg : DataArray of specific humidity
+        da_Psurf_f_tavg : DataArray of surface pressure
+    Output:
+        xr.DataArray
+    """
+    # Get vapour pressures (Saturation and at dew-point)
     da_Pvap = get_Pvap(da_Qair_f_tavg, da_Psurf_f_tavg)
     da_Psvap = get_Psvap(da_Tair_f_tavg)
     da_Pvap, da_Psvap = xr.align(da_Pvap, da_Psvap, join="exact", copy=False)
+    
+    # Take the ratio between vapour pressure and saturation vapour pressure
     da_QRair = 100 * (da_Pvap / da_Psvap)
+    
+    # Result packaging; with new attributes in metadata
     da_QRair.attrs = {"long_name": "relative humidity", "units": "%"}
     return da_QRair.rename("relative humidity")
 
@@ -118,6 +149,8 @@ def get_afi(
     da_Tair_f_tavg = _temperature_celsius(da_Tair_f_tavg)
     da_QRair, da_Tair_f_tavg = xr.align(da_QRair, da_Tair_f_tavg, join="exact", copy=False)
     da_afi = 0.05 * da_QRair - 0.1 * (da_Tair_f_tavg - 27)
+    
+    # Result packaging; with new attributes in metadata
     da_afi.attrs = {"units": "1", "long_name": "angstrom fire index"}
     da_afi = da_afi.rename("afi_init")
     return da_afi.drop_encoding()
