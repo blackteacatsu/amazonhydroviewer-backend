@@ -76,7 +76,7 @@ Run one initialization per invocation with the Python environment activated.
 Set `END_DATE`to the last day file expected in that run. The wrapper validates both boundaries and the runner ejects gaps in between.
 
 ```shell
-mkdir -p /mnt/vast/lis_products/fwi_amazon/forecast/logs
+mkdir -p /mnt/vast/ksu/lis_products/fwi_amazon/forecast/logs
 INIT_DATE=2001-07-01 \
 END_DATE=2001-12-31 \
 nohup bash scripts/shell/fwi/eval_ldas_fcst_fwi.sh \
