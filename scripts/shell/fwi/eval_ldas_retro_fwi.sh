@@ -14,7 +14,7 @@ conda activate analytics
 # This script lives in scripts/shell; the Python runner lives in scripts/python.
 # Resolve from the script's location rather than your terminal's working directory.
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-scripts_dir="$(cd -- "$script_dir/.." && pwd)"
+scripts_dir="$(cd -- "$script_dir/../.." && pwd)"
 runner="$scripts_dir/python/get_fireW_index.py"
 
 # Read-only annual input archives. ARCHIVE_DIR can override this default.
@@ -69,10 +69,10 @@ for ((year=start_year; year<=end_year; year++)); do
     # and search all output years for the previous day's moisture codes.
     # "$@" forwards options such as --dask-workers and --worker-memory unchanged.
     "$python_bin" "$runner" \
+        --mode retrospective \
         --input-dir "$batch/outputs/retrospective/SURFACEMODEL" \
         --output-dir "$output_dir/$year" \
         --restart-root "$output_dir" \
-	--overwrite \
         "${init_args[@]}" "$@"
 
     # Reached only after a successful Python run. Delete this temporary extraction;
