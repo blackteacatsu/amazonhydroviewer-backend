@@ -198,7 +198,12 @@ def attach_daily_time(ds:xr.Dataset, variables:tuple[str]) -> xr.Dataset:
     return ds
 
 
-def inventory(inputs:list[Path], variables:tuple) -> list:
+def inventory(
+        inputs:list[Path], 
+        variables:tuple,
+        start_date=None,
+        end_date=None
+) -> list:
     """
     Read timestamps/units only; 
     close each file before opening the next.
@@ -220,7 +225,18 @@ def inventory(inputs:list[Path], variables:tuple) -> list:
                 raise ValueError(f'Forcing units differ between files: {path}')
             units = current
             records.extend((time, path, i) for i, time in enumerate(ds.time.values))
+    # Filter by decoded valid dates to partial months and year boundaries work.
+    if start_date is not None:
+        records = [row for row in records if row[0].astype('datetime64[D]') >= np.datetime64(start_date)]
+    if end_date is not None:
+        records = [row for row in records if row[0].astype('datetime64[D]') <= np.datetime64(end_date)]
+    if not records:
+        raise ValueError('No daily records in the requested interval')
     records.sort(key=lambda row: row[0])
+
+    for boundary, actual in ((start_date, records[0][0]), (end_date, records[-1][0])):
+        if boundary is not None and actual.astype('daretime64[D]') != np.datetime64(boundary):
+            raise ValueError(f'Missing requested boundary date: {boundary}')
     times = np.array([row[0] for row in records])
     if len(times) > 1 and not np.all(np.diff(times) == np.timedelta64(1, 'D')):
         raise ValueError('Input dates have a gap, duplicate, or non-daily interval')
@@ -262,7 +278,8 @@ def load_daily_moisture_codes(
         path:str, 
         first_time, 
         template, 
-        locations
+        locations,
+        broadcast_ensemble=False,
 ) -> list[xr.DataArray]:
     """
     Read FFMC/DMC/DC from one daily output, 
@@ -289,18 +306,35 @@ def load_daily_moisture_codes(
         if name in locations:
             xr.testing.assert_equal(ds[name].reset_coords(drop=True), locations[name].reset_coords(drop=True))
     moisture_codes = []
+
     for name in ('ffmc', 'dmc', 'dc'):
         field = ds[name].reset_coords(drop=True)
+        
+        # Only initial retrospective states may receive ensemble dimension for conformity.
+        # Validate spatial sizes and coordinates before copying to each member.
+        target = template
+        if broadcast_ensemble:
+            if 'ensemble' not in template.dims or 'ensemble' in field.dims:
+                raise ValueError('Expected retrospective state and ensemble forecast template.')
+            target=template.isel(ensemble=0, drop=True)
+
         if dict(field.sizes) != dict(template.sizes):
             raise ValueError(f'Previous-output grid dimensions differ: {name}')
-        for dim in template.dims:
-            if (dim in field.coords) != (dim in template.coords):
+        
+        for dim in target.dims:
+            if (dim in field.coords) != (dim in target.coords):
                 raise ValueError(f'Previous-output coordinate differs: {dim}')
-        xr.align(field, template, join='exact')
+        
+        xr.align(field, target, join='exact')
         if bool((np.isinf(field) | (field < 0) | ((field > 101) if name == 'ffmc' else False)).any()):
             raise ValueError(f'Invalid saved moisture code: {name}')
+
+        if broadcast_ensemble:
+            field = field.expand_dims(ensemble=template.ensemble).transpose(*template.dims)
+        
         # Preserve NaNs and full precision; never fill missing history with defaults.
         moisture_codes.append(field.astype('float64'))
+    
     return moisture_codes
 
 
