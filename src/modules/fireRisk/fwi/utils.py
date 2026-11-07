@@ -235,7 +235,7 @@ def inventory(
     records.sort(key=lambda row: row[0])
 
     for boundary, actual in ((start_date, records[0][0]), (end_date, records[-1][0])):
-        if boundary is not None and actual.astype('daretime64[D]') != np.datetime64(boundary):
+        if boundary is not None and actual.astype('datetime64[D]') != np.datetime64(boundary):
             raise ValueError(f'Missing requested boundary date: {boundary}')
     times = np.array([row[0] for row in records])
     if len(times) > 1 and not np.all(np.diff(times) == np.timedelta64(1, 'D')):
@@ -318,7 +318,7 @@ def load_daily_moisture_codes(
                 raise ValueError('Expected retrospective state and ensemble forecast template.')
             target=template.isel(ensemble=0, drop=True)
 
-        if dict(field.sizes) != dict(template.sizes):
+        if dict(field.sizes) != dict(target.sizes):
             raise ValueError(f'Previous-output grid dimensions differ: {name}')
         
         for dim in target.dims:

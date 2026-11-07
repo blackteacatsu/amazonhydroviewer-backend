@@ -6,7 +6,7 @@ source /home/local/WIN/qsu4/miniconda3/etc/profile.d/conda.sh
 conda activate analytics
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-runner="$scripts_dir/../../python/get_fireW_index.py"
+runner="$script_dir/../../python/get_fireW_index.py"
 
 # Use the active environment's Python, 
 python_bin="${PYTHON:-python}"
@@ -15,28 +15,28 @@ python_bin="${PYTHON:-python}"
 : "${END_DATE:?Set END_DATE to the last forecast valid date}"
 
 # Define source directories
-fcst_root="${FCST_ROOT:-/mnt/vast/prakrut/backup/lis_runs/malaria_amazon/forecast/daily/jul01/SURFACEMODEL}"
+fcst_dir="${FCST_DIR:-/mnt/vast/prakrut/backup/lis_runs/malaria_amazon/forecast/daily/jul01/SURFACEMODEL}"
 retro_dir="${RETRO_DIR:-/mnt/vast/ksu/lis_products/fwi_amazon/retrospective/daily/original_dc}"
 dc_method="${DC_METHOD:-original}"
 case "$dc_method" in
     original) method_dir=original_dc ;;
     SoilMoist_inst)
         method_dir=soilMoist_dc
-        : "${RETRO_ROOT:?Set RETRO_ROOT to retrospective output using the same soil DC method}"
+        : "${RETRO_DIR:?Set RETRO_DIR to retrospective output using the same soil DC method}"
         : "${SOIL_SATURATION:?Set SOIL_SATURATION to the MAXSMC NetCDF used by retrospective}"
         ;;
     *) echo "Unsupported DC_METHOD : $dc_method" >&2; exit 2;;
 esac
 output_root="${OUTPUT_DIR:-/mnt/vast/ksu/lis_products/fwi_amazon/forecast/daily}"
-output_dir="$output_root/$dc_method/init_$INIT_DATE"
+output_dir="$output_root/$method_dir/init_$INIT_DATE"
 
-for location in "$forecast_root" "$retro_root" "$output_root"; do
-    [["$location" == /*]] || {echo "Use an absolute path: $location" >&2; exit 2; }
+for location in "$fcst_dir" "$retro_dir" "$output_dir"; do
+    [[ "$location" == /* ]] || { echo "Use an absolute path: $location" >&2; exit 2; }
 done
 
 # Enumerate intersecting months using calender dates, including cross-year runs.
 # START_DATE is only needed to resume after a completed forecast checkpoint.
-selection="$("$python_bin" - "$INIT_DATE" "${START_DATE:-}" "$END_DATE" "$forecast_root" <<'PY'
+selection="$("$python_bin" - "$INIT_DATE" "${START_DATE:-}" "$END_DATE" "$fcst_dir" <<'PY'
 from datetime import date, timedelta
 from pathlib import Path
 import sys
@@ -55,7 +55,7 @@ while month <= end:
     month = (month.replace(day=28) + timedelta(days=4)).replace(day=1)
 
 PY
-+)"
+)"
 
 inputs=()
 # Bash 3-compatible array construction also preserves spaces in directory names.
@@ -67,21 +67,21 @@ inputs=("${inputs[@]:1}")
 # within this initialization's output directory, preventing cross-run resumes.
 checkpoint_args=(--restart-root "$output_dir")
 first_date="$("$python_bin" -c 'from datetime import date,timedelta; import sys; print(date.fromisoformat(sys.argv[1])+timedelta(days=1))' "$INIT_DATE")"
-if [[ "$start_date" == "$first_date"]]; then
-    checkpoint="$("$python_bin" - "retro_root" "$INIT_DATE" <<'PY'
+if [[ "$start_date" == "$first_date" ]]; then
+    checkpoint="$("$python_bin" - "$retro_dir" "$INIT_DATE" <<'PY'
 from pathlib import Path
 import sys
-root = Path(sys.argv[1])
+retro_dir = Path(sys.argv[1])
 date = sys.argv[2]
 names = [f'LIS_FWI_{date.replace("-", "_")}.nc', f'fwi_{date.replace("-", "")}.nc']
-matches = sorted({p.resolve() for name in names for p in root.rglob(name) if p.is_file()})
+matches = sorted({p.resolve() for name in names for p in retro_dir.rglob(name) if p.is_file()})
 if len(matches) != 1:
     raise SystemExit(f'Expected one retrospective checkpoint for {date}, found {len(matches)}')
 
 print(matches[0])  
 PY
 )"
-    checkpoint_args=(--initial_state "$checkpoint")
+    checkpoint_args=(--initial-state "$checkpoint")
 fi
 extra_args=(--dc-method "$dc_method")
 if [[ "$dc_method" == SoilMoist_inst ]]; then
@@ -89,7 +89,7 @@ if [[ "$dc_method" == SoilMoist_inst ]]; then
 fi
 # Positional flags are compute settings, RH policy or an explicit overwrite.
 # Keep run identity and data selection controlled by the environment above.
-for option in "@$"; do
+for option in "$@"; do
     case "$option" in 
         --input*|--output-dir*|--restart-root*|--mode*|--init*|--start-date*|--end-date*|--dc-method*|--soil-saturation*)
         echo "Configure runs selection through environment variables :$option" >&2; exit 2 ;;

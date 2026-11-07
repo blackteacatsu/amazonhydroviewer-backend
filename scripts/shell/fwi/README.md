@@ -83,21 +83,21 @@ nohup bash scripts/shell/fwi/eval_ldas_fcst_fwi.sh \
     --dask-workers 4 \
     --worker-memory 32GiB \
     > /mnt/vast/ksu/lis_products/fwi_amazon/forecast/logs/fwi_fcst_init_2001-07-01_original_dc.log \
-    2>1 < /dev/null &
+    2>&1 < /dev/null &
 echo "Job PID: $!"
 ```
 
-Output go under `OUTPUT_ROOT/original_dc/init_2001-07-01/`. The default
-`OUTPUT_ROOT` is `/mnt/vast/ksu/lis_products/forecast/fwi_amazon/daily`.
+Output go under `OUTPUT_DIR/original_dc/init_2001-07-01/`. The default
+`OUTPUT_DIR` is `/mnt/vast/ksu/lis_products/fwi_amazon/forecast/daily`.
 
-Override `FORECAST_ROOT` in the `.sh` script with the initialization-specific `SURFACEMODEL`
+Override `FCST_DIR` in the `.sh` script with the initialization-specific `SURFACEMODEL`
 directory when using an archive other than the documented `jul01` archive.
 
 To resume after a completed forecast day, set `START_DATE` to the next date,
-keeping `INIT_DATE`, configuration, and `OUTPUT_ROOT` the same. The preceding
+keeping `INIT_DATE`, configuration, and `OUTPUT_DIR` the same. The preceding
 forecast output must be present. Existing daily output require
 
-For soil-moisture DC, set `DC_METHOD=SoilMoist_inst`, `RETRO_ROOT` to matching
+For soil-moisture DC, set `DC_METHOD=SoilMoist_inst`, `RETRO_DIR` to matching
 retrospective outputs, and `SOIL_SATURATION` to their MAXSMC saturation file.
 The current saturation loader expects `MAXSMC` with `lat` and `lon` dimensions.
 Older preprocessing examples below produce a different schema (`SM_sat`),

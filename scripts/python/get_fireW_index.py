@@ -58,7 +58,7 @@ def parse_args(argv=None):
 
     # Toggle input & compatibility with daily forecast data
     p.add_argument(
-        '--mode', choices=('retrospective', 'forecast'), default='retrospective', required=True,
+        '--mode', choices=('retrospective', 'forecast'), default='retrospective',
         help="Specific the type of input "
     )
     p.add_argument('--init-date', type=lambda value: datetime.strptime(value, '%Y-%m-%d').date(),
@@ -102,7 +102,7 @@ def parse_args(argv=None):
             p.error('Forecast requires --init-date and a checkpoint; --initialize is unsupported')
     elif args.init_date is not None:
         p.error('--init-date requires --mode forecast')
-    elif args.start_date and args.end_date and args.init_date > args.end_date:
+    if args.start_date and args.end_date and args.start_date > args.end_date:
         p.error('Invalid date choices, --start-date must before --end-date')
     
     if args.dask_workers < 0 or args.chunk_size < 1:
@@ -126,8 +126,7 @@ def run(args:argparse.Namespace) -> dict:
     # Inspect inputs and obtain sorted 
     # (timestamp, file path, record index) tuples; (reject time gaps/duplicates)
     # Collect the original timestamps; these retain their time of day.
-    if args.dc_method == 'SoilMoist_inst':
-        soil_method = args.dc_method
+    soil_method = args.dc_method == 'SoilMoist_inst'
     input_variables = VARIABLES + (('SoilMoist_inst',) if soil_method else ())
 
     inventory_rows = utils.inventory(
@@ -140,8 +139,7 @@ def run(args:argparse.Namespace) -> dict:
     dates = times.astype('datetime64[D]')
     inputs = list(dict.fromkeys(row[1] for row in inventory_rows))
 
-    if args.mode == 'forecast':
-        forecast = args.mode
+    forecast = args.mode == 'forecast'
     init_date = np.datetime64(args.init_date, 'D') if forecast else None
     first_fcst_day = forecast and dates[0] == init_date + np.timedelta64(1, 'D')
     if forecast and dates[0] <= init_date:
@@ -189,15 +187,17 @@ def run(args:argparse.Namespace) -> dict:
                         raise ValueError('Initial checkpoint must comes from retrospective.')
                     if any('ensemble' in previous[name].dims for name in ('ffmc', 'dmc', 'dc')):
                         raise ValueError('Initial retrospective checkpoint must have no ensemble dimension in it.')
-                    elif (previous.attrs.get('mode') != 'forecast'
-                          or previous.attrs.get('forecast_init_date') != str(init_date)):
+                elif (previous.attrs.get('mode') != 'forecast'
+                        or previous.attrs.get('forecast_init_date') != str(init_date)):
                         raise ValueError(f'Resume checkpoint must belong to this forecast initialization {init_date}.')
-                    for key, expected in (
-                        {'sampling', 'daily_mean_approximation'},
-                        {'day_length_scheme' : 'original_Canadian_month_tables_not_regionally_calibrated.'}
-                    ):
-                        if previous.attrs.get(key) != expected:
-                            raise ValueError(f'Checkpoint configuration differs: {key}.')
+
+                # Check configuration for both initialization and resume batches.
+                for key, expected in (
+                    ('sampling', 'daily_mean_approximation'),
+                    ('day_length_scheme', 'original_Canadian_month_tables_not_regionally_calibrated')
+                ):
+                    if previous.attrs.get(key) != expected:
+                        raise ValueError(f'Checkpoint configuration differs: {key}.')
 
 
             if previous.attrs.get('dc_method', 'original') != args.dc_method:
@@ -256,7 +256,7 @@ def run(args:argparse.Namespace) -> dict:
             with xr.open_dataset(initial_path) as previous:
                 origin = previous.attrs['forecast_initial_state_file']
         metadata.update(
-            forecast_initial_date=str(init_date),
+            forecast_init_date=str(init_date),
             forecast_initial_state_file=origin,
             lead_day_convention='valid_date minus initialization date; first day is 1'
         )
