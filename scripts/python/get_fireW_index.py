@@ -50,14 +50,34 @@ CODES = (
 
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--input-dir', '--input', dest='input_dir', type=Path, nargs='+', required=True, help='Daily LDAS NetCDF files or folders (if folders then search for LIS_HIST*.nc).')
+    p.add_argument('--input-dir', '--input', dest='input_dir', type=Path, nargs='+', 
+                   required=True, help='Daily LDAS NetCDF files or folders (if folders then the program will search for LIS_HIST*.nc).'
+    )
     p.add_argument('--output-dir', type=Path, required=True)
     p.add_argument('--restart-root', type=Path, help='Output tree for preceding daily FWI file; default to `output_dir.`')
+
+    # Toggle input & compatibility with daily forecast data
+    p.add_argument(
+        '--mode', choices=('retrospective', 'forecast'), default='retrospective', required=True,
+        help="Specific the type of input "
+    )
+    p.add_argument('--init-date', type=lambda value: datetime.strptime(value, '%Y-%m-%d').date(),
+        help='Forecast initialization date, YYYY-MM-DD.'
+    )
+    p.add_argument('--start-date', type=lambda value: datetime.strptime(value, '%Y-%m-%d').date(),
+        help='First valid date to process, inclusive.'
+    )
+    p.add_argument('--end-date', type=lambda value: datetime.strptime(value, '%Y-%m-%d').date(),
+        help='Last valid date to process, inclusive.'
+    )
+
+    # Configure local Dask Cluster
     p.add_argument('--dask-workers', type=int, default=0, help='Optional local worker processes (0 runs NumPy directly).')
     p.add_argument('--worker-memory', default='4GiB', help='Memory limit per Dask worker; stay within job allocation.')
     p.add_argument('--chunk-size', type=int, default=270, help='Spatial chunk edge length for Dask.')
 
-    # Define constants used for initializing FWI runs before the first day of available data.
+    # Define constants used for initializing FWI runs
+    # before the first day of available data.
     start = p.add_mutually_exclusive_group()
     start.add_argument('--initial-state', type=Path, help='Explicit checkpoint from the preceding day(override auto search).')
     start.add_argument('--initialize', action='store_true', help='Start a new series using initial constants.')
@@ -69,16 +89,30 @@ def parse_args(argv=None):
                    help='Cap finite RH above 100% (default), or reproduce the strict masking policy.')
     p.add_argument('--dc-method', choices=('SoilMoist_inst', 'original'), default='original',
                    help='Specify the drought code method used, the moisture equivalent originally used in 1987 (default)')
-    p.add_argument('--soil-saturation', type=Path, help='Preprocessed SM_sat NetCDF on the LDAS grid, depth 0–40 cm.')
+    p.add_argument('--soil-saturation', type=Path, help='SM_sat input file for LDAS in NetCDF, on the fcst grid.')
     p.add_argument('--overwrite', action='store_true', help='Replace this run’s output files.')
     args = p.parse_args(argv)
+
+    # Self-diagnostic of user input arguments before running
     if (args.dc_method == 'SoilMoist_inst') != (args.soil_saturation is not None):
         p.error('--dc-method SoilMoist_inst requires --soil-saturation; original does not use it')
+
+    if args.mode=='forecast':
+        if args.init_date is None or args.initialize:
+            p.error('Forecast requires --init-date and a checkpoint; --initialize is unsupported')
+    elif args.init_date is not None:
+        p.error('--init-date requires --mode forecast')
+    elif args.start_date and args.end_date and args.init_date > args.end_date:
+        p.error('Invalid date choices, --start-date must before --end-date')
+    
     if args.dask_workers < 0 or args.chunk_size < 1:
         p.error('Require nonnegative --dask-workers and positive --chunk-size')
+    
     initials = (args.initial_ffmc, args.initial_dmc, args.initial_dc)
     if not all(np.isfinite(v) for v in initials) or not 0 <= initials[0] <= 101 or min(initials[1:]) < 0:
         p.error('Require finite FFMC in [0,101] and finite nonnegative DMC/DC')
+
+    # Exit and pass down input arguments to the main runner
     return args
 
 
@@ -89,22 +123,55 @@ def run(args:argparse.Namespace) -> dict:
     # Search a shared output tree when months/years use separate output folders.
     restart_root = (args.restart_root or output_dir).expanduser().resolve()
     
-    # Inspect inputs and obtain sorted (timestamp, file path, record index) tuples; 
-    # (reject time gaps/duplicates)
+    # Inspect inputs and obtain sorted 
+    # (timestamp, file path, record index) tuples; (reject time gaps/duplicates)
     # Collect the original timestamps; these retain their time of day.
-    soil_method = args.dc_method == 'SoilMoist_inst'
+    if args.dc_method == 'SoilMoist_inst':
+        soil_method = args.dc_method
     input_variables = VARIABLES + (('SoilMoist_inst',) if soil_method else ())
-    inventory_rows = utils.inventory(args.input_dir, input_variables)
+
+    inventory_rows = utils.inventory(
+        args.input_dir,
+        input_variables,
+        args.start_date,
+        args.end_date
+    )
     times = np.array([row[0] for row in inventory_rows])
     dates = times.astype('datetime64[D]')
     inputs = list(dict.fromkeys(row[1] for row in inventory_rows))
 
+    if args.mode == 'forecast':
+        forecast = args.mode
+    init_date = np.datetime64(args.init_date, 'D') if forecast else None
+    first_fcst_day = forecast and dates[0] == init_date + np.timedelta64(1, 'D')
+    if forecast and dates[0] <= init_date:
+        raise ValueError('Forecast valid dates must follow initialization')
+    if first_fcst_day and args.initial_state is None:
+        raise ValueError('First forecast batch requires an explicit retrospective --initial-state')
+
     # Load the first day to establish the spatial grid & source metadata.
     # Build YYYYMMDD for the day immediately before this batch, used to find its checkpoints.
     first_day = utils.read_day(inventory_rows[0], input_variables)
+    if forecast:
+        for name in input_variables:
+            if 'ensemble' not in first_day[name].dims:
+                raise ValueError(f'Variable {name} in the forecast file is missing the ensemble dimension.')
+            # Beware that earlier hindcast records only have one ensemble member.
+            
+            # To represent a deterministic forecast as one member:
+            # for name in input_variables:
+            #   if 'ensemble' not in daily[name].dims:
+            #       daily[name] = daily[name].expand_dims(ensemble=[1])
+        if 'ensemble' not in first_day.coords or first_day.ensemble.dims != ('ensemble',):
+            raise ValueError(f'Forecast file requires an one-dimensional ensemble coordinate.')
+        members = first_day.indexes['ensemble']
+        if not len(members) or not members.is_unique or members.hasnans:
+            raise ValueError('Forecast member IDs must be valid/nonempty and unique.')
+
     saturation = soilMoist.load_saturation(args.soil_saturation, first_day) if soil_method else None
     saturation_hash = hashlib.sha256(saturation.values.tobytes()).hexdigest() if soil_method else ''
     previous_date = str(dates[0] - np.timedelta64(1, 'D')).replace('-', '')
+    
     # With --initialize use predefined constant; 
     # otherwise choose an explicit checkpoint or the expected preceding-day file
     initial_path = None if args.initialize else utils.find_previous_output(args.initial_state, restart_root, previous_date)
@@ -112,16 +179,38 @@ def run(args:argparse.Namespace) -> dict:
         initial_path = initial_path.expanduser().resolve()
         if not initial_path.is_file():
             raise FileNotFoundError(f'Missing checkpoint file at path {initial_path}. ')
+    
     if initial_path is not None:
         with xr.open_dataset(initial_path) as previous:
             previous_policy = previous.attrs.get('rh_policy', 'mask')
+            if forecast:
+                if first_fcst_day:
+                    if previous.attrs.get('mode', 'retrospective') != 'retrospective':
+                        raise ValueError('Initial checkpoint must comes from retrospective.')
+                    if any('ensemble' in previous[name].dims for name in ('ffmc', 'dmc', 'dc')):
+                        raise ValueError('Initial retrospective checkpoint must have no ensemble dimension in it.')
+                    elif (previous.attrs.get('mode') != 'forecast'
+                          or previous.attrs.get('forecast_init_date') != str(init_date)):
+                        raise ValueError(f'Resume checkpoint must belong to this forecast initialization {init_date}.')
+                    for key, expected in (
+                        {'sampling', 'daily_mean_approximation'},
+                        {'day_length_scheme' : 'original_Canadian_month_tables_not_regionally_calibrated.'}
+                    ):
+                        if previous.attrs.get(key) != expected:
+                            raise ValueError(f'Checkpoint configuration differs: {key}.')
+
+
             if previous.attrs.get('dc_method', 'original') != args.dc_method:
                 raise ValueError('Restart drought-code method differs from this run')
+            
             if soil_method and previous.attrs.get('soil_saturation_sha256') != saturation_hash:
                 raise ValueError('Restart saturation field differs from this run')
+        
         if previous_policy != args.rh_policy:
             raise ValueError('Restart RH policy differs from this run. Recompute from initialization into a new output directory.')
+    
     selected = xr.Dataset(coords={'time': times})
+    
     # Prepare one daily output filename for every input date.
     # Name the JSON summary with the first and last day processed.
     paths = [output_dir / utils.daily_output_name(date) for date in dates]
@@ -129,11 +218,13 @@ def run(args:argparse.Namespace) -> dict:
     for path in paths + [summary_path]:
         if path.exists() and not args.overwrite:
             raise FileExistsError(f'{path} exists; select another directory or use --overwrite')            
+    
     # Validate static metadata before creating any files.
     for n in VARIABLES:
         utils.stdize_units(first_day[n])
     output_dir.mkdir(parents=True, exist_ok=True)
     metadata = {
+        'mode' : args.mode,
         'source_files': json.dumps([str(path) for path in inputs]),
         'algorithm': 'Van Wagner and Pickett 1985 with Yang 2015 soil-moisture DC' if soil_method else 'Van Wagner and Pickett 1985 written equations',
         'sampling': 'daily_mean_approximation',
@@ -156,6 +247,20 @@ def run(args:argparse.Namespace) -> dict:
         'created_utc': datetime.now(timezone.utc).isoformat(),
         'gap_policy': 'invalid forcing invalidates all three carried codes; no automatic reinitialization',
     }
+
+    if forecast:
+        # Preserve the origin through subsequent batches for reproducibility.
+        if first_fcst_day:
+            origin = str(initial_path)
+        else:
+            with xr.open_dataset(initial_path) as previous:
+                origin = previous.attrs['forecast_initial_state_file']
+        metadata.update(
+            forecast_initial_date=str(init_date),
+            forecast_initial_state_file=origin,
+            lead_day_convention='valid_date minus initialization date; first day is 1'
+        )
+
     # For a resumed batch, avoid reporting unused initialization constants.
     # Select the three constant-initialization metadate entries & remove them.
     if initial_path:
@@ -165,34 +270,58 @@ def run(args:argparse.Namespace) -> dict:
         metadata.pop('initial_dc', None)
         metadata['soil_depth_cm'] = '0-40'
         metadata['soil_invalid_policy'] = 'Mask missing, nonpositive, or above-saturation moisture; FFMC/DMC history remains invalid after gaps'
+    
     # Inherit projection metadata from source file
     # Visit the source projection, grid origin, and spacing attributes.
-    for key in ['MAP_PROJECTION', 'SOUTH_WEST_CORNER_LAT', 'SOUTH_WEST_CORNER_LON', 'DX', 'DY']:
+    for key in [
+        'MAP_PROJECTION', 
+        'SOUTH_WEST_CORNER_LAT', 
+        'SOUTH_WEST_CORNER_LON', 
+        'DX', 'DY'
+    ]:
         if key in first_day.attrs:
             value = first_day.attrs[key]
             metadata[key] = value.item() if isinstance(value, np.generic) else value
+    
     # Choose day length factors (Le & Lf) from the month of each original timestamp.
     day_l_factors = utils.get_day_length_factors(selected.time)
+    
     # Keep latitude and longitude arrays, when available, for restart-grid validation.
     # Load and validate 
     first_locations = {n : first_day[n] for n in ('lon', 'lat') if n in first_day}
-    moisture_code = (utils.load_daily_moisture_codes(initial_path, times[0], first_day.Tair_f_tavg, first_locations)
-                     if initial_path else None)
+    moisture_code = (
+        utils.load_daily_moisture_codes(
+            initial_path, times[0],
+            first_day.Tair_f_tavg, 
+            first_locations,
+            broadcast_ensemble=first_fcst_day
+        ) if initial_path else None
+    )
+    
     # Accumulate daily counts and summary statistics for the final JSON file.
     # Process everyday in chronological order, pairing its date with its output filename.
     records = []
     static_locations = None
     for index, (date, path) in enumerate(zip(dates, paths)):
+        
         # Keep memory bounded: load five forcings and locations for ONE day.
         # Reuse the already-loaded first day; subsequent calls open, load and close one day at a time.        
         daily = first_day if index == 0 else utils.read_day(inventory_rows[index], input_variables)
+        
+        
         # Keep file I/O in the parent process; distribute only the spatial calculations.
         if args.dask_workers:
             dims = daily.Tair_f_tavg.dims
             daily = daily.chunk({dim: args.chunk_size for dim in dims})
+        
         T, H, W, R, valid, diagnostics = utils.prepare_weather(
-            daily, VARIABLES, rh_policy=args.rh_policy, return_diagnostics=True)
+            daily, 
+            VARIABLES, 
+            rh_policy=args.rh_policy, 
+            return_diagnostics=True
+        )
         locations = {n: daily[n] for n in ['lat', 'lon'] if n in daily}
+        
         # Require the spatial dimensions and sizes to match the first day.
         if dict(T.sizes) != dict(first_day.Tair_f_tavg.sizes):
             raise ValueError('Spatial dimensions does not match !')
@@ -200,6 +329,7 @@ def run(args:argparse.Namespace) -> dict:
         xr.align(T, first_day.Tair_f_tavg, join='exact')
         if set(locations) != set(first_locations):
             raise ValueError('Latitude/Longitude availability changed between days')
+        
         # Establish the geographic reference on the first day.
         if static_locations is None:
             static_locations = locations
@@ -209,40 +339,48 @@ def run(args:argparse.Namespace) -> dict:
         if moisture_code is None:
             moisture_code = [xr.full_like(T, v, dtype=np.float64).where(valid)
                         for v in [args.initial_ffmc, args.initial_dmc, args.initial_dc]]
-        # FFMC/DMC always need history. Soil-derived DC itself is memoryless.
+        
+        # FFMC/DMC/og-DC always need history. 
+        # But Soil-derived DC itself is memoryless.
         active = valid.copy()
         for previous in moisture_code[:2] if soil_method else moisture_code:
             active = active & np.isfinite(previous)
         if soil_method:
             thickness = daily.attrs.get('SOIL_LAYER_THICKNESSES')
             if thickness is None or not np.allclose(thickness, [10, 30, 60, 100]):
-                raise ValueError('Soil method requires LDAS layer thicknesses 10,30,60,100 cm')
-            sm = soilMoist.avg_soilMoist_wDepth(daily.SoilMoist_inst)
+                raise ValueError('Soil method requires LDAS layer thicknesses: 10, 30, 60, 100 cm')
+            sm = soilMoist.volumetric(daily['SoilMoist_inst'].isel(SoilMoist_profiles=1, drop=True))
             soil_dc = soilMoist.get_drought_code(sm, saturation)
             # Retain the existing conservative gap policy for all carried codes.
             active = active & np.isfinite(soil_dc)
+        # Read length scale factor
         le = xr.DataArray(float(day_l_factors.Le.isel(time=index)))
         lf = xr.DataArray(float(day_l_factors.Lf.isel(time=index)))
+
+        # Computed block
         ffmc = core.get_ffmc(T, H, W, R, moisture_code[0]).where(active)
         dmc = core.get_dmc(T, H, R, moisture_code[1], le).where(active)
-
         if soil_method:
             dc = soil_dc.where(active)
         elif args.dc_method == 'original':
             dc = core.get_drought_code(T, R, moisture_code[2], lf).where(active)
-
         isi = core.get_isi(W, core.ffmc_to_moisture(ffmc)).where(active)
         bui = core.get_bui(dmc, dc).where(active)
         fwi, dsr = core.get_fwi(isi, bui)
 
         fields = [ffmc, dmc, dc, isi, bui, fwi, dsr]
+        
         # Evaluate this day's graph once, before validation, statistics, or writing.
         # Carry computed arrays forward so the graph cannot grow across days.
-        computed = xr.Dataset(dict(zip(CODES, fields)))
+        computed = xr.Dataset(
+            dict(
+                zip(CODES, fields)
+            )
+        )
         if soil_method:
-            computed['soil_moisture_0_40'] = sm
+            computed['soil_moisture_10_40'] = sm
             computed['soil_moisture_valid'] = np.isfinite(soil_dc)
-            computed['soil_above_saturation'] = np.isfinite(sm) & (sm > saturation)
+            computed['soil_above_saturation'] = soilMoist.above_saturation(sm, saturation) # float32 alignment and set oversat DC=0
         computed['forcing_valid'] = valid
         computed['state_valid'] = active
         computed['relative_humidity_raw'] = diagnostics['relative_humidity_raw']
@@ -257,16 +395,26 @@ def run(args:argparse.Namespace) -> dict:
         
         # Carry today's full-precision moisture codes into the next iteration; do not reinitialize them.
         moisture_code = [ffmc, dmc, dc]  # Full precision; never reset on each date.
-        result = xr.Dataset(dict(zip(CODES, fields))).assign_coords(locations)
+        result = xr.Dataset(
+            dict(
+                zip(CODES, fields)
+            )
+        ).assign_coords(locations)
         if soil_method:
-            for name in ('soil_moisture_0_40', 'soil_moisture_valid', 'soil_above_saturation'):
-                result[name] = computed[name] if name == 'soil_moisture_0_40' else computed[name].astype('int8')
+            for name in ('soil_moisture_10_40', 'soil_moisture_valid', 'soil_above_saturation'):
+                result[name] = computed[name] if name == 'soil_moisture_10_40' else computed[name].astype('int8')
         result['forcing_valid'] = valid.astype('int8')
         result['state_valid'] = active.astype('int8')
         result['relative_humidity_raw'] = computed.relative_humidity_raw
         result['rh_capped'] = computed.rh_capped.astype('int8')
         result = result.expand_dims(time=[selected.time.values[index]])
-        result.attrs = {**metadata, 'valid_date': str(date), 'Le': float(le), 'Lf': float(lf)}
+        result.attrs = {
+            **metadata, 
+            'valid_date': str(date), 
+            'Le': float(le), 'Lf': float(lf)
+        }
+        if forecast:
+            result.attrs['lead_day'] = int((date - init_date) / np.timedelta64(1, "D"))
         utils.write_netcdf(result, path)
         
         # Begin the daily summary with its date and count of valid-weather cells.
@@ -278,20 +426,32 @@ def run(args:argparse.Namespace) -> dict:
         if soil_method:
             record['soil_valid_cells'] = int(computed.soil_moisture_valid.sum())
             record['soil_above_saturation_cells'] = int(computed.soil_above_saturation.sum())
+        
         # Visit each named output array.
         for n, field in zip(CODES, fields):
             values = field.values[np.isfinite(field.values)]
-            record[n] = ({
-                'min': float(values.min()),
-                'mean': float(values.mean()),
-                'max': float(values.max()),
-            } if values.size else None)
+            record[n] = (
+                {
+                    'min': float(values.min()),
+                    'mean': float(values.mean()),
+                    'max': float(values.max()),
+                } if values.size else None
+            )
+
         records.append(record)
         print(f'{date}: {record["state_valid_cells"]:,} valid cells -> {path.name}', flush=True)
-    summary = {**metadata, 'days_completed': len(records), 'restart_file': str(paths[-1]), 'daily': records}
+    
+    summary = {
+        **metadata, 
+        'days_completed': len(records), 
+        'restart_file': str(paths[-1]), 
+        'daily': records
+    }
+
     temporary = summary_path.with_suffix('.json.partial')
     temporary.write_text(json.dumps(summary, indent=2, allow_nan=False) + '\n')
     temporary.replace(summary_path)
+    
     print(f'Complete: {len(records)} daily files, restart state and {summary_path.name}', flush=True)
     return summary
 
