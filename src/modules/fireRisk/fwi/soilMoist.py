@@ -50,7 +50,7 @@ def above_saturation(sm : xr.DataArray, sat_sm : xr.DataArray)-> xr.DataArray:
 
 def get_drought_code(
         sm: xr.DataArray, 
-        saturation: xr.DataArray
+        sat_sm: xr.DataArray
 ) -> xr.DataArray:
     """Equation 6: mask inconsistent saturation rather than clip negative DC."""
 
@@ -74,7 +74,11 @@ def load_saturation(path, day: xr.Dataset) -> xr.DataArray:
 
     with xr.open_dataset(path) as ds:
         sat = volumetric(ds['MAXSMC'].transpose("lat", "lon")).load()
-        template = day['Tair_f_tavg'].transpose("north_south", "east_west")
+        template = day['Tair_f_tavg']
+        # Saturation is hared spatial property; keeping its hash member-independent.
+        if 'ensemble' in template.dims:
+            template = template.isel(ensemble=0, drop=True)
+        template=template.transpose('north_south', 'east_west')
         if sat.shape != template.shape:
             raise ValueError('Saturation and LDAS grid differ')    
     
