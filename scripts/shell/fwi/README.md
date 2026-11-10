@@ -193,7 +193,7 @@ $$DC = 400 \ln{\frac{\text{Saturated Soil Moisture}}{\text{Soil Moisture}}} $$
 # Create the log directory before shell redirection opens the log file.
 mkdir -p /mnt/vast/ksu/lis_products/fwi_amazon/retrospective/logs
 
-DC_METHOD=SoilMoist_inst \
+DC_METHOD=soilMoist_dc \
 SOIL_SATURATION=/mnt/vast/ksu/lis_products/inputs/AmazonLDAS_MAXSMC.nc \
 START_YEAR=2001 \
 END_YEAR=2025 \
