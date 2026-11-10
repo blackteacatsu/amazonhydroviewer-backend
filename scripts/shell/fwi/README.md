@@ -89,11 +89,10 @@ The FWI calculated from retrospective LDAS data is stored under: `/mnt/vast/ksu/
 Run one initialization per invocation. Set `END_DATE`to the last day file expected in that run. The wrapper validates both boundaries and the runner ejects gaps in between.
 
 ```shell
-mkdir -p /mnt/vast/ksu/lis_products/fwi_amazon/forecast/logs
+# mkdir -p /mnt/vast/ksu/lis_products/fwi_amazon/forecast/logs
 
 INIT_DATE=2001-07-01 \ # <-- chane this to other init date
 END_DATE=2001-12-31 \ # <-- every init forecast 6-month into the future.
-
 nohup bash scripts/shell/fwi/eval_ldas_fcst_fwi.sh \
     --dask-workers 4 \
     --worker-memory 32GiB \
@@ -191,17 +190,16 @@ $$DC = 400 \ln{\frac{\text{Saturated Soil Moisture}}{\text{Soil Moisture}}} $$
 
 ```bash
 # Create the log directory before shell redirection opens the log file.
-mkdir -p /mnt/vast/ksu/lis_products/fwi_amazon/retrospective/logs
+# mkdir -p /mnt/vast/ksu/lis_products/fwi_amazon/retrospective/logs
 
-DC_METHOD=soilMoist_dc \
+DC_METHOD=SoilMoist_inst \
 SOIL_SATURATION=/mnt/vast/ksu/lis_products/inputs/AmazonLDAS_MAXSMC.nc \
 START_YEAR=2001 \
 END_YEAR=2025 \
-
 nohup bash scripts/shell/fwi/eval_ldas_retro_fwi.sh \
     --dask-workers 4 \
     --worker-memory 32GiB \
-    > /mnt/vast/ksu/lis_products/fwi_amazon/retrospective/logs/fwi_2001_2025_soilMoist_dc.log \
+    > /mnt/vast/ksu/lis_products/fwi_amazon/retrospective/logs/fwi_2001_2025_SoilMoist_inst.log \
     2>&1 < /dev/null &
 
 echo "Job PID: $!"

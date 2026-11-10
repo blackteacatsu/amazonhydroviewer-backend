@@ -74,30 +74,34 @@ def load_saturation(path, day: xr.Dataset) -> xr.DataArray:
 
     with xr.open_dataset(path) as ds:
         sat = volumetric(ds['MAXSMC'].transpose("lat", "lon")).load()
-        template = day['Tair_f_tavg']
+        template = day['Tair_f_tavg'] # sample data array
+
         # Saturation is hared spatial property; keeping its hash member-independent.
         if 'ensemble' in template.dims:
             template = template.isel(ensemble=0, drop=True)
-        template=template.transpose('north_south', 'east_west')
+        
         if sat.shape != template.shape:
             raise ValueError('Saturation and LDAS grid differ')    
     
     # Latitude varies by row; longitude varies by column.
-    for name, axis in (
-        ("lat", sat.lat.values[:, None]),
-        ("lon", sat.lon.values[None, :])
+    for name, dim in (
+        ("lat", "north_south"),
+        ("lon", "east_west")
     ):
         if name not in day:
             raise ValueError(f"LDAS file is missing {name}")
+        if day[name].dims != (dim,):
+            raise ValueError(f"Expected LDAS {name} to have dimension: ({dim},)")
 
-        actual = day[name].transpose(*template.dims).values
-        expected = np.broadcast_to(axis, actual.shape)
+        actual = day[name].values
+        #transpose(*template.dims).values
+        expected = sat[name].values
         valid = np.isfinite(actual) # LDAS coordinates/data are missing off land.
 
-        if not valid.any() or not np.allclose(
+        if actual.shape != expected.shape or not np.allclose(
             actual[valid], expected[valid], rtol=0, atol=1e-4
         ):
-            raise ValueError(f"MAXSMC and LDAS {name} coordinates differ")
+            raise ValueError(f"MAXSMC and LDAS {dim} coordinates differ")
 
     sat = xr.DataArray(
         sat.data, dims=template.dims, coords=template.coords,

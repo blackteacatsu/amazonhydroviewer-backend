@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+# Stop on a failed command, an unset variable,
+# or a failure anywhere in a pipeline.
 set -eou pipefail
 
 # Load Conda for noninteractive jobs and use the dependencies
@@ -17,6 +20,7 @@ python_bin="${PYTHON:-python}"
 # Define source directories
 fcst_dir="${FCST_DIR:-/mnt/vast/prakrut/backup/lis_runs/malaria_amazon/forecast/daily/jul01/SURFACEMODEL}"
 retro_dir="${RETRO_DIR:-/mnt/vast/ksu/lis_products/fwi_amazon/retrospective/daily/original_dc}"
+
 dc_method="${DC_METHOD:-original}"
 case "$dc_method" in
     original) method_dir=original_dc ;;
@@ -25,7 +29,9 @@ case "$dc_method" in
         : "${RETRO_DIR:?Set RETRO_DIR to retrospective output using the same soil DC method}"
         : "${SOIL_SATURATION:?Set SOIL_SATURATION to the MAXSMC NetCDF used by retrospective}"
         ;;
-    *) echo "Unsupported DC_METHOD : $dc_method" >&2; exit 2;;
+    *) echo "Unsupported DC_METHOD : $dc_method" >&2;
+    exit 2
+    ;;
 esac
 output_root="${OUTPUT_DIR:-/mnt/vast/ksu/lis_products/fwi_amazon/forecast/daily}"
 output_dir="$output_root/$method_dir/init_$INIT_DATE"
@@ -57,11 +63,13 @@ while month <= end:
 PY
 )"
 
-inputs=()
+
 # Bash 3-compatible array construction also preserves spaces in directory names.
+inputs=()
 while IFS= read -r line; do inputs+=("$line"); done <<< "$selection"
 start_date="${inputs[0]}"
 inputs=("${inputs[@]:1}")
+
 
 # Resolve only the first checkpoint from retrospective. Later batches search
 # within this initialization's output directory, preventing cross-run resumes.
@@ -87,6 +95,7 @@ extra_args=(--dc-method "$dc_method")
 if [[ "$dc_method" == SoilMoist_inst ]]; then
     extra_args+=(--soil-saturation "$SOIL_SATURATION")
 fi
+
 # Positional flags are compute settings, RH policy or an explicit overwrite.
 # Keep run identity and data selection controlled by the environment above.
 for option in "$@"; do
@@ -95,6 +104,7 @@ for option in "$@"; do
         echo "Configure runs selection through environment variables :$option" >&2; exit 2 ;;
     esac
 done
+
 
 # Keep Python bytecode and Dask spill files out of the code checkout.
 export PYTHONDONTWRITEBYTECODE=1
