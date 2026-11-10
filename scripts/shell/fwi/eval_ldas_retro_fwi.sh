@@ -22,7 +22,7 @@ conda activate analytics
 # This script lives in scripts/shell/fwi; the Python runner lives in scripts/python.
 # Resolve from the script's location rather than your terminal's working directory.
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-runner="$scripts_dir/../../python/get_fireW_index.py"
+runner="$script_dir/../../python/get_fireW_index.py"
 
 
 # Use the active environment's Python, 
