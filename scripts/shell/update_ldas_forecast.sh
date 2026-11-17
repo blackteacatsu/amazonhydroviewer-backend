@@ -12,8 +12,7 @@ current_date_time="$(date +%Y-%m-%d)"
 # This script lives in scripts/shell; the Python runner lives in scripts/python.
 # Resolve from the script's location rather than shell's working directory.
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-scripts_dir="$(cd -- "$script_dir/.." && pwd)"
-runner="$scripts_dir/python/updater.py"
+runner="$script_dir/python/updater.py"
 
 # Read monthly-forecast from mounted drive.
 fcst_dir="/mnt/vast/prakrut/backup/lis_runs/malaria_amazon/forecast/monthly"

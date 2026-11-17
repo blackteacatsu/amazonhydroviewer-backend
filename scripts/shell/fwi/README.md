@@ -131,7 +131,7 @@ Run each year's July 1st initialization sequentially, using their retrospective 
 ```bash
 # Run from the repository directory.
 log_dir=/mnt/vast/ksu/lis_products/fwi_amazon/forecast/logs
-# mkdir -p "$log_dir" # <= include this if running for the first time
+mkdir -p "$log_dir" # <= include this if running for the first time
 
 # Timestamp distinguishes this batch from earlier attempts.
 batch_id="$(date +%Y%m%d_%H%M%S)"
@@ -190,7 +190,7 @@ $$DC = 400 \ln{\frac{\text{Saturated Soil Moisture}}{\text{Soil Moisture}}} $$
 
 ```bash
 # Create the log directory before shell redirection opens the log file.
-# mkdir -p /mnt/vast/ksu/lis_products/fwi_amazon/retrospective/logs
+mkdir -p /mnt/vast/ksu/lis_products/fwi_amazon/retrospective/logs
 
 DC_METHOD=SoilMoist_inst \
 SOIL_SATURATION=/mnt/vast/ksu/lis_products/inputs/AmazonLDAS_MAXSMC.nc \
@@ -199,7 +199,7 @@ END_YEAR=2025 \
 nohup bash scripts/shell/fwi/eval_ldas_retro_fwi.sh \
     --dask-workers 4 \
     --worker-memory 32GiB \
-    > /mnt/vast/ksu/lis_products/fwi_amazon/retrospective/logs/fwi_2001_2025_SoilMoist_inst.log \
+    > /mnt/vast/ksu/lis_products/fwi_amazon/retrospective/logs/fwi_2001_2025_soilMoist_dc.log \
     2>&1 < /dev/null &
 
 echo "Job PID: $!"
@@ -207,9 +207,53 @@ echo "Job PID: $!"
 
 The retrospective wrapper defaults to `DC_METHOD=original`. Soil mode requires
 `DC_METHOD=SoilMoist_inst` and an absolute, readable `SOIL_SATURATION` path.
-`OUTPUT_DIR` is a base directory: results go to `OUTPUT_DIR/original_dc/YEAR`
-or `OUTPUT_DIR/soilMoist_dc/YEAR`; do not include the method directory in the override.
+
+`OUTPUT_DIR` is a base directory: results go to `OUTPUT_DIR/original_dc/YEAR` or `OUTPUT_DIR/soilMoist_dc/YEAR`; do not include the method directory in the override.
+
 Restarts search only the selected method tree. Resume with `START_YEAR` after a
 completed year, keeping the same saturation file and method. Pass compute flags
 (e.g. `--dask-workers`, `--worker-memory`), RH policy, and `--overwrite` as arguments;
 configure input/output paths, method, and year selection through environment variables.
+
+### LDAS derived FWI forecast using
+
+```bash
+# Run from the repository directory.
+log_dir=/mnt/vast/ksu/lis_products/fwi_amazon/forecast/logs
+mkdir -p "$log_dir" # <= include this if running for the first time
+
+# Timestamp distinguishes this batch from earlier attempts.
+batch_id="$(date +%Y%m%d_%H%M%S)"
+
+nohup bash -c '
+    set -euo pipefail
+    log_dir="$1"
+    batch_id="$2"
+
+    for year in {2001..2024}; do
+        log_file="$log_dir/fwi_init_${year}-07-01_${batch_id}.log"
+        echo "$(date -Is) Starting ${year}-07-01 — $log_file"
+
+        if DC_METHOD=SoilMoist_inst \
+           SOIL_SATURATION=/mnt/vast/ksu/lis_products/inputs/AmazonLDAS_MAXSMC.nc \
+           RETRO_DIR=/mnt/vast/ksu/lis_products/fwi_amazon/retrospective/daily/soilMoist_dc \
+           INIT_DATE="${year}-07-01" \
+           END_DATE="${year}-12-31" \
+           PYTHONUNBUFFERED=1 \
+           bash scripts/shell/fwi/eval_ldas_fcst_fwi.sh \
+               --dask-workers 4 \
+               --worker-memory 32GiB \
+               > "$log_file" 2>&1
+        then
+            echo "$(date -Is) Completed ${year}-07-01"
+        else
+            echo "$(date -Is) FAILED ${year}-07-01 — see $log_file"
+            exit 1
+        fi
+    done
+' bash "$log_dir" "$batch_id" \
+    > "$log_dir/batch_${batch_id}.log" 2>&1 < /dev/null &
+
+echo "Batch PID: $!"
+echo "Batch log: $log_dir/batch_${batch_id}.log"s
+```
