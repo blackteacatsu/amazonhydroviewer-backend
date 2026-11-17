@@ -9,10 +9,12 @@ from pathlib import Path
 import modules.utils as utils
 
 
-def get_thresh(icat : int,
-               quantiles : list,
-               xrds : xr.DataArray,
-               dims : list[str, str] = ['ensemble', 'time']) -> tuple[int, int]:
+def get_thresh(
+        icat : int,
+        quantiles : list[float],
+        xrds : xr.DataArray,
+        dims : list[str, str] = ['ensemble', 'time']
+) -> tuple[int, int]:
     """
     Calculate threshold boundaries for a category based on quantiles.
 
@@ -25,6 +27,7 @@ def get_thresh(icat : int,
     Returns:
         tuple: (lower_threshold, upper_threshold) for the category
     """
+
     if not all(elem in xrds.dims for elem in dims):
         raise Exception(f'Some dimensions in {dims} not present in xr.DataArray {xrds.dims}')
 
@@ -46,11 +49,14 @@ def get_thresh(icat : int,
     return xrds_lo, xrds_hi
 
 
-def calculate_probabilities(hcst : xr.DataArray,
-                            fcst : xr.DataArray,
-                            quantiles : Sequence[float] = (1/3., 2/3.),
-                            *,
-                            mask_zeros: bool = True) -> xr.DataArray:
+def calculate_probabilities(
+        hcst : xr.DataArray,
+        fcst : xr.DataArray,
+        quantiles : Sequence[float] = (1/3., 2/3.),
+        *,
+        # independent quantiles? 
+        mask_zeros: bool = True
+) -> xr.DataArray:
     """
     Calculate tercile category probability exceedance for ensemble forecast.
     
@@ -70,6 +76,7 @@ def calculate_probabilities(hcst : xr.DataArray,
                          - Category 1 = normal (33rd-67th percentile)
                          - Category 2 = above normal (> 67th percentile)
     """
+
     print('\n Computing probabilities...')
     numcategories = len(quantiles) + 1  # 3 categories for terciles
 
@@ -165,12 +172,7 @@ def mainloop(
                     )
                 with xr.open_dataset(river_mask_file) as river_ds:
                     river_network = river_ds['mask'].load()
-                # if river_mask_file.exists():
-                #     river_network = xr.open_dataset(river_mask_file)['mask']
-                #     print()
-                #     print()
-                # else:
-                #     print("File not found: {river_mask_file}")
+                
                 probs_with_nan = probs_with_nan.where(river_network)
                 probs_with_nan.to_zarr(output_file, zarr_format = 2, mode = "w")
                 print(f"  ✓ Saved → {Path(output_file).name}")
