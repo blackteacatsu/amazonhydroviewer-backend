@@ -9,11 +9,12 @@ import numpy as np
 from pathlib import Path
 from datetime import date, timedelta
 from modules.fireRisk.fwi.utils import daily_output_name
+from modules.get_prob_fcst import *
 
 CODES = ('ffmc', 'dmc', 'dc', 'isi', 'bui', 'fwi', 'dsr')
 
 CONFIG_DEFAULTS={
-    #'dc_method' : 'original',
+    'dc_method' : 'original',
     'rh_policy' : 'mask',
     'sampling' : None,
     'day_length_scheme' : None,
@@ -21,14 +22,14 @@ CONFIG_DEFAULTS={
 }
 
 
-def inventory(root : Path) -> dict[date, Path]:
+def inventory(dir : Path) -> dict[date, Path]:
     """Triage output by names w/o scanning """
-    if not root.is_file:
-        raise FileNotFoundError(root)
+    if not dir.is_dir():
+        raise FileNotFoundError(dir)
     
     result ={}
-    for path in sorted(root.rglob('*.nc')):
-        match = re.fullmatch(r'(?:LIS_FWI_(\d{4})_(\d{2})_(\d{2})', path.stem) 
+    for path in sorted(dir.rglob('*.nc')):
+        match = re.fullmatch(r'LIS_FWI_(\d{4})_(\d{2})_(\d{2})', path.stem) 
         if match is None:
             continue
         parts = match.groups()[:3] if match.group(1) else match.groups()[3:]
@@ -37,7 +38,7 @@ def inventory(root : Path) -> dict[date, Path]:
             raise ValueError(f'Duplicate FWI output for {day}: {result[day]} and {path}')
         result[day] = path
     if not result:
-        raise ValueError(f'Daily output files missing under {root}')
+        raise ValueError(f'Daily output files missing under {dir}')
     return result
 
 
@@ -63,14 +64,14 @@ def month_windows(
     return max(start, first), end
     
 
-def read_daily_fwi(
+def read_daily_codes(
         path : Path, 
         expected_date : date,
         *,
         forecast : bool,
         initialization : date | None = None
 ) -> xr.Dataset:
-    """Validate one product and normalize spatial dimensions to y/x."""
+    """Validate and normalize spatial dimensions to y/x."""
     
     with xr.open_dataset(path) as source:
         if source.sizes.get('time') != 1 or source.time.dims != ('time',):
@@ -78,28 +79,28 @@ def read_daily_fwi(
         if not np.issubdtype(source.time.dtype, np.datetime64):
             raise ValueError(f'Expected decoded Gregorian time: {path}')
         actual = np.datetime_as_string(source.time.values[0], unit='D')
-        
+
+        # 
         if actual != str(expected_date):
             raise ValueError(f'{path}: expected {expected_date}, found {actual}')
         attrs = dict(source.attrs)
 
         # Handle forecast 
         if forecast:
-            if initialization is None or attrs.get() != str(initialization):
+            if initialization is None or attrs.get('forecast_init_date') != str(initialization):
                 raise ValueError(f'Wrong/missing forecast initialization: {path}')
             if attrs.get('lead_day') != (expected_date - initialization).days:
                 raise ValueError(f'Wrong/missing lead day: {path}')
         elif attrs.get('mode', 'retrospective') != 'retrospective':
             raise ValueError(f'Reference file is not retrospective: {path} !')
         
-        field=source[list[CODES]].isel(time=0, drop=True) # <== indifference to 'ensemble' dim
+        field=source[list(CODES)].isel(time=0, drop=True) # <== indifference to 'ensemble' dim
         
         if not forecast and 'ensemble' in field.dims:
             raise ValueError(f'Retrospective FWI unexpectedly has ensemble dimension: {path} !')
         if forecast and 'ensemble' not in field.dims:
             # Older deterministic forecasts represent one actual member.
             field = field.expand_dims(ensemble=[1])
-
 
         # Handle forecast
         if forecast:
@@ -121,29 +122,45 @@ def read_daily_fwi(
             xr.align(field, state, join='exact')
             field=field.where(state == 1) # <-- Mask field with valid cells
 
-        template = field.isel(ensemble=0, drop=True) if forecast else field
+        template = field[CODES[0]]
+        if forecast:
+            template=template.isel(ensemble=0, drop=True)
+
+
         locations = {}
         for name in ('lat', 'lon'):
             coord = source[name]
             if 'time' in coord.dims:
-                coord = coord.isel(time=0, drop=True)
+                coord=coord.isel(time=0, drop=True)
             if set(coord.dims) - set(spatial):
                 raise ValueError(f'Unexpected {name} dimensions: {path}')
-            locations[name]=(('y', 'x'), coord.broadcast_like(template).transpose(*spatial).values)
-        order = ('ensemble', *spatial) if forecast else spatial
-        values = field.transpose(*order).values.astype('float64')
-
-        if np.isinf(values).any() or np.any(values<0):
-            raise ValueError(f'Non-finite or negative valid FWI: {path}')
-        dims = ('ensemble', 'y', 'x') if forecast else ('y', 'x')
-        coords = {
-            'y':np.arange(template.sizes[spatial[0]]),
-            'x':np.arange(template.sizes[spatial[1]]),
+            
+            locations[name]=(
+                ('y', 'x'), 
+                coord.broadcast_like(template).transpose(*spatial).values,
+            )
+        order=('ensemble', *spatial) if forecast else spatial
+        dims=('ensemble', 'y', 'x') if forecast else ('y', 'x')
+        coords={
+            'y': np.arange(template.sizes[spatial[0]]),
+            'x': np.arange(template.sizes[spatial[1]]),
             **locations
         }
         if forecast:
-            coords['ensemble'] = field.ensemble.values
-        return xr.Dataset({'fwi' : (dims, values)}, coords=coords, attrs=attrs)
+            coords['ensemble']=field['ensemble'].values
+
+        variables={}
+        for code in CODES:
+            da=field[code]
+            if set(da.dims) != set(order):
+                raise ValueError(f'Unexpected dimensions for {code}: {path}')
+            values=da.transpose(*order).values.astype('float64')
+            if np.isinf(values).any() or np.any(values<0):
+                raise ValueError(f'Non-finite or negative valid FWI: {path}')
+            variables[code]=(dims, values, dict(da.attrs))
+        
+
+        return xr.Dataset(variables, coords=coords, attrs=attrs)
 
 
 def same_grid(
@@ -167,6 +184,7 @@ def same_configuration(
         if a is None or b is None or a != b:
             raise ValueError(f'FWI configuration differs or missing for: {name}')
 
+
 def monthly_mean(
         paths:dict[date, Path],
         start : date,
@@ -175,7 +193,7 @@ def monthly_mean(
         forecast:bool=False,
         initialization : date | None = None
 ) ->tuple[xr.Dataset] | xr.Dataset:
-    """"""
+    """Aggregate daily files and reduce to monthly average."""
 
     count_days=(end - start).days + 1
     if count_days <1:
@@ -187,23 +205,24 @@ def monthly_mean(
         if day not in paths:
             raise FileNotFoundError(f'Missing {daily_output_name(day)}')
         
-        daily = read_daily_fwi(
+        daily = read_daily_codes(
             paths[day], 
             day, 
             forecast=forecast, 
             initialization=initialization
         )
 
-        fields = daily[list[CODES]]
+        fields = daily[list(CODES)]
         
         if first is None:
             first = daily
-            total=xr.zeros_like(daily['fwi'], dtype='float64')
-            count=xr.zeros_like(daily['fwi'], dtype='int32')
+            # Keep separate sums and valid-day counts for every code.
+            total=xr.zeros_like(fields, dtype='float64')
+            count=xr.zeros_like(fields, dtype='int32')
         else:
-            same_grid()
-            same_configuration(first, day)
-            xr.align(first[list[CODES]], fields, join='exact')
+            same_grid(first, daily)
+            same_configuration(first, daily)
+            xr.align(first[list(CODES)], fields, join='exact')
         
         # A missing day remains visible in counts and invalidates the monthly mean.
         finite = np.isfinite(fields)
@@ -248,17 +267,17 @@ def prep_monthly_cache(
             same_configuration(reference, retro)
         reference = retro
         
-        vars = {} # <-- FWI components output catcher 
+        variables = {} # <-- FWI components output catcher 
         for code in CODES:
-            vars[f'fcst_{code}']=fcst[code]
-            vars[f'retro_{code}']=retro[code]
-            vars[f'fcst_{code}_valid_days']=fcst[f'{code}_valid_days']
-            vars[f'retro_valid_days']=retro[f'{code}_valid_days']
-        vars['member_present'] = xr.ones_like(
+            variables[f'fcst_{code}']=fcst[code]
+            variables[f'retro_{code}']=retro[code]
+            variables[f'fcst_{code}_valid_days']=fcst[f'{code}_valid_days']
+            variables[f'retro_{code}_valid_days']=retro[f'{code}_valid_days']
+        variables['member_present'] = xr.ones_like(
             fcst['ensemble'],
             dtype='int8',
         )
-        record = xr.Dataset(vars).expand_dims(year=[year])
+        record = xr.Dataset(variables).expand_dims(year=[year])
         record['member_count']=('year', [(fcst.sizes['ensemble'])])
         record['expected_days']=('year', [(end - start).days+1])
         for name, value in [
@@ -289,7 +308,7 @@ def prep_monthly_cache(
     return result
 
 
-def eval_monthly_corr(
+def eval_monthly_deterministic(
         monthly : xr.Dataset, 
         min_years : int = 10,
 )->xr.Dataset:
@@ -297,23 +316,26 @@ def eval_monthly_corr(
     Pearson correlation across paired initialization years 
     (for fcst & retro) at each grid cells
     """
-    
     if min_years < 3:
         raise ValueError('Require at least three paired years')
-    present=monthly['present_members'] == 1
+    present=monthly['member_present'] == 1
+    member_count=monthly['member_count']
     
     # Absent padded members are ignored; missing actual members invalidate the mean
-    actual_finite=np.isfinite(monthly['fcst_fwi']) | ~present
-    complete=actual_finite.all('ensemble') & (monthly['member_count'] > 0)
-    vars = {}
+    variables={}
 
     for code in CODES:
+        members=monthly[f'fcst_{code}']
+        actual_finite=np.isfinite(members) | ~present
+        complete=actual_finite.all('ensemble') & (member_count > 0)
+
+        # Ensemble avg of forecast
         fcst=(
-            monthly[f'fcst_{code}'].where(present).sum('ensemble', skipna=True) 
-            / monthly['member_count']
-        ) #<-- ensemble avg of forecast
-        fcst=fcst.where(complete)
+            members.where(present).sum('ensemble', skipna=True) 
+            / member_count
+        ).where(complete)
         retro=monthly[f'retro_{code}']
+
 
         # Both series must use exactly the sam eyears for means and covariance
         paired=np.isfinite(fcst) & np.isfinite(retro)
@@ -328,17 +350,204 @@ def eval_monthly_corr(
         )
         corr= (
             (dx*dy).sum(dim='year') / denominator.where(denominator>0)
+        ).clip(-1, 1).where(n >= min_years)
+
+        # Magnitude errors 
+        error = fcst - retro
+        bias = error.mean(dim='year').where(n >= min_years)
+        rmse = np.sqrt(
+            (error**2).mean(dim='year', skipna=True)
         ).where(n >= min_years)
 
-        vars[f'pearson_r_{code}']=corr.clip(-1, 1)
-        vars[f'paired_years_{code}']=n
+        # Approximate pointwise Fisher intervals require N > 3 and 
+        ci_valid=(
+            (n >= min_years)
+            & (n>3)
+            & np.isfinite(corr)
+            & (np.abs(corr) < 1)
+        )
 
-    result=xr.Dataset(vars)
+        fisher_z=np.arctanh(corr.where(ci_valid))
+        std_error= 1.0 / np.sqrt((n.astype('float64')-3).where(ci_valid))
+        ci_upper = np.tanh(fisher_z + 1.96 * std_error)
+        ci_lower = np.tanh(fisher_z - 1.96 * std_error)
+
+        variables[f'pearson_r_{code}']=corr.clip(-1, 1)
+        variables[f'paired_years_{code}']=n
+        variables[f'bias_{code}']=bias
+        variables[f'rmse_{code}']=rmse
+        variables[f'pearson_ci_lower_{code}']=ci_lower
+        variables[f'pearson_ci_upper_{code}']=ci_upper
+    
+
+    # Return all fields in one xr.Dataset.
+    result=xr.Dataset(variables)
     result.attrs.update(monthly.attrs)
     result.attrs.update(
-        correlation_method='',
+        correlation_method='Pearson',
         correlation_dim='year',
         min_paired_years=min_years,
         centering='Separate forecast/retrospective means over paired valid years',
+        bias_convention='Forecast minus retrospective',
+        confidence_method='Approximate pointwise fisher-z interval',
+        confidence_level=0.95,
+        confidence_assumption='Independent paired initialization years',
+        perfect_correlation_ci='Undefined when abs(r) equals 1'
     )
     return result
+
+        
+        # for code in CODES:
+        #     # Form ensemble means while respecting actual member presence.
+        #     fcst=(
+        #         monthly[f'fcst_{code}'].where(present).sum('ensemble', skipna=True) 
+        #         / monthly['member_count']
+        #     )
+        #     fcst=fcst.where(complete)
+        #     retro=monthly[f'retro_{code}']
+
+            # Apply one paired-value mask for every metric.
+
+            # Compute ACC, RMSE, bias, sample counts, and confidence intervals.
+
+
+
+
+# def eval_monthly_probabilistic(
+#         monthly : xr.Dataset,
+#         training_years : list[int],
+#         verification_years : list[int],
+# )->xr.Dataset:
+#     """
+#     Parameters
+#     ----------
+#         monthly : xr.Dataset
+#         training_years : list of int
+#             selects the historical data used to 
+#             generate tercile threshold & climatologies
+#         verification_years : list of int
+#             selects the forecast probabilities and matching 
+#             retrospective outcomes used to calculate RPSS.
+#     """
+
+#     for t_year, v_year in zip(training_years, verification_years):
+#         if t_year == v_year:
+#             raise ValueError(
+#                 f'Invalid time window selection: the two overlaps {t_year, v_year}'
+#             )
+#     if training_years[:-1] > verification_years[0]:
+#         raise ValueError(
+#             f'Verification years({verification_years[0]}) predates training years({training_years[:-1]})' 
+#         )
+
+#     present=monthly['member_present']==1
+#     member_count=monthly['member_count']
+#     outputs={}
+
+    
+#     ds_t = monthly.sel(year=training_years) # <-- ds of training yrs
+#     ds_v = monthly.sel(year=verification_years) # <-- ds of verification yra
+
+#     for code in CODES:
+#         fcst_t=ds_t[f'fcst_{code}']
+#         retro_t=ds_t[f'retro_{code}']
+
+#         fcst_v=ds_v[f'fcst_{code}']
+#         retro_v=ds_v[f'retro_{code}']
+
+#         yearly_scores = []
+#         for year in monthly['year'].values:
+            
+#             # Calculate tercile thresholds for this monthly period.
+#             threshold_v=get_thresh(
+#                 icat=3, 
+#                 quantiles=[1/3, 2/3], 
+#                 xrds=retro_v['year'==year], 
+#                 dims=['ensemble', 'year']
+#             )
+#             threshold_t=get_thresh(
+#                 icat=3, 
+#                 quantiles=[1/3, 2/3], 
+#                 xrds=retro_v['year'==year], 
+#                 dims=['ensemble', 'year']
+#             )
+
+#             fcst_prob=calculate_probabilities(
+#                 hcst=fcst_t,
+#                 fcst=fcst_v,
+#             )
+
+#             # 3. Categorize each forecast member and the retrospective value.
+
+
+#             # 4. Calculate all three forecast category probabilities.
+
+
+#             # 5. Calculate forecast RPS and climatological-reference RPS.
+#             dx=fcst_prob.sel(year=year) - historical_prob.sel(year=year)
+#             # dy=
+#             rps_fcst=
+#             rps_clim=np.sum()
+
+#             # 6. Retain the ensemble-size correction and valid-case mask.
+#             debiased=(member_count**2 - 1)/(6 * 3 * member_count)
+
+#             pass
+
+#         # Aggregate scores over the same valid verification years.
+
+#         # Calculate debiased RPSS from aggregated scores
+#         rpss=(1-(rps_fcst / (rps_clim + debiased)))
+        
+#         # Apply the minimum verification-year requirement.
+#         rpss=
+
+#         # Add results to outputs.
+#         variables[f'rpss_{code}']=rpss
+
+#     # Return all fields in one xr.Dataset
+#     result=xr.Dataset(outputs)
+#     result.attrs.update(
+#         min_paired_years='',
+#     )
+#     return result
+
+def plot_corr(result:xr.Dataset, path:Path)->None:
+    """Plot coefficient and sample count with a fixed correlation color scale."""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    fig, axes=plt.subplots(1, 2, figsize=(11, 4))
+    geo=np.isfinite(result['lat']) & np.isfinite(result['lon'])
+    for ax, name in zip(axes, ('correlation', 'paired_yrs')):
+        valid=geo & np.isfinite(result[name])
+        opts={
+            'cmap': 'RdBu_r', 
+            'vmin': -1, 
+            'vmax': 1
+        } if name == 'correlation' else {
+            'cmap': 'viridis', 
+            'vmin': 0
+        }
+        artist=ax.scatter(
+            result['lon'].values[valid.values],
+            result['lat'].values[valid.values],
+            c=result[name].values[valid.values],
+            s=1,
+            rasterized=True,
+            **opts
+        )
+        fig.colorbar(artist, ax=ax)
+        ax.set(
+            title=name.replace('_', ' ').title(),
+            xlabel='longitude',
+            ylabel='latitude',
+        )
+    fig.suptitle(
+        f'Monthly {result.attrs["code"].upper()} verification — '
+        f'period {result.attrs["lead_month"]}'
+    )
+    fig.tight_layout()
+    fig.savefig(path, dpi=160)
+    plt.close(fig)
