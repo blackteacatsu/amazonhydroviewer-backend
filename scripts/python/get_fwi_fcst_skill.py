@@ -12,10 +12,8 @@ import xarray as xr
 from pathlib import Path
 from datetime import date
 
-from dotenv import load_dotenv
-
-
-load_dotenv()
+#from dotenv import load_dotenv
+#load_dotenv()
 
 SRC = Path(__file__).resolve().parents[2] / 'src' # <== replace with .env in the future
 sys.path.insert(0, str(SRC))
