@@ -109,7 +109,7 @@ def main(argv=None):
                 f'Correlation output exists for period {lead}; backup before rerunning'
             )
 
-        with xr.open_dataset(path) as source:
+        with xr.open_dataset(path, engine='h5netcdf') as source:
             needed=[
                 'member_present',
                 'member_count',

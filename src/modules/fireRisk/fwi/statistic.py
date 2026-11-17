@@ -73,7 +73,7 @@ def read_daily_codes(
 ) -> xr.Dataset:
     """Validate and normalize spatial dimensions to y/x."""
     
-    with xr.open_dataset(path) as source:
+    with xr.open_dataset(path, engine='h5netcdf') as source:
         if source.sizes.get('time') != 1 or source.time.dims != ('time',):
             raise ValueError(f'Expected one time step per file, {path}')
         if not np.issubdtype(source.time.dtype, np.datetime64):
