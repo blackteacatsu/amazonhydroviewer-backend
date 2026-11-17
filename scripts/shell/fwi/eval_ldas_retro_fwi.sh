@@ -106,6 +106,7 @@ for ((year=start_year; year<=end_year; year++)); do
         --input-dir "$batch/outputs/retrospective/SURFACEMODEL" \
         --output-dir "$output_dir/$year" \
         --restart-root "$output_dir" \
+	--overwrite \
         "${method_args[@]}" \
         "${init_args[@]}" "$@"
 
