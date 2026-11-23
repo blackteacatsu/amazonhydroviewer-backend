@@ -48,43 +48,48 @@ To monitor the processing progress type the following:
 tail -f /mnt/vast/ksu/lis_products/fwi_amazon/retrospective/logs/fwi_2001_2025_original_dc.log
 ```
 
-## Forecast FWI using LDAS
+## Forecast FWI using LDAS - `eval_ldas_fcst_fwi.sh`
 
 To derive FWI from LIS forecast runs, use script `eval_ldas_fcst_fwi.sh`.
 
 Check the structure of the forecast directory before initiating the runner script, make sure it conforms with the requirement of the runner. Daily lis-forecast runs are stored under: `/mnt/vast/prakrut/backup/lis_runs/malaria_amazon/forecast/daily/jul01/SURFACEMODEL`.
 
 > [!NOTE]
-> Since right now there are only daily forecasts initialized on July 1st between 2001 to 2024 year on the `/mnt/vast/...` location. In the future, data initialized on other days will be added, and the forecast directory should will be organized as `/mnt/vast/.../daily/{init_date}/...`
+> `/mnt/vast/...` location currently only has daily forecasts initialized on July 1st for each year between 2001 to 2024.
+> In the future, data initialized on other days will be added, and the forecast directory should will be organized as `~/forecast/daily/{init_date}`.
 
 The July 1st initialized data takes the following structure under the `~/jul01/SURFACEMODEL/` directory should looks like,
 
 ```bash
-forecast/daily/jul01/SURFACEMODEL/
+/forecast/daily/jul01/SURFACEMODEL/
+│
 ├── 200107/
 │   ├── LIS_HIST_200107020000.d01.nc
 │   ├── LIS_HIST_200107030000.d01.nc
 │   ├── ...
 │   └── LIS_HIST_200107310000.d01.nc
+│
 ├── 200108/
 │   ├── LIS_HIST_200108010000.d01.nc
 │   └── ...
+│
 ├── ...
+│
 ├── 202407/
 │   ├── LIS_HIST_202407020000.d01.nc
 │   └── ...
+│
 └── 202412/
     ├── LIS_HIST_202412010000.d01.nc
     ├── ...
     └── LIS_HIST_202412310000.d01.nc
 ```
 
-LIS uses the July 1st data to forecast starting from the day after it, therefore every year's hindcast starts from July 2nd.
-So, in our FWI workflow, we will need to first read the FWI of July 1st derived from the LIS retrospective data of that specific year to spin up the algorithm.
+Meanwhile, notice that the files under the July folder of each year starts on July 2nd. This is because LIS uses the July 1st data to spin-up and forecast the next day, therefore every year's hindcast starts from July 2nd.
 
-The FWI calculated from retrospective LDAS data is stored under: `/mnt/vast/ksu/lis_products/fwi_amazon/retrospective/daily/original_dc/`
+So, in our FWI workflow, we will need to first read the FWI data of July 1st derived from the **LIS retrospective data** for each year to spin up the condition for FWI calculation. The FWI calculated from retrospective LDAS data is stored under: `/mnt/vast/ksu/lis_products/fwi_amazon/retrospective/daily/original_dc/`
 
-### Run one year's initialization first to test the method.
+### Run one year's initialization first to test the method & working environment.
 
 Run one initialization per invocation. Set `END_DATE`to the last day file expected in that run. The wrapper validates both boundaries and the runner ejects gaps in between.
 
@@ -122,7 +127,7 @@ The current saturation loader expects `MAXSMC` with `lat` and `lon` dimensions.
 which requires separate reconciliation before use with the current loader. -->
 
 > [!CAUTION]
-> Use of `SoilMoist_inst` in Drought Code are included for experimental purposes only, see section below for more information. Use with caution.
+> Use of `SoilMoist_inst` in Drought Code is included for experimental use only, see section below for more information. <!-- Use with caution. -->
 
 ### Processing the entire batch
 
