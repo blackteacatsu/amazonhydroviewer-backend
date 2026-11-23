@@ -31,8 +31,13 @@ def main(argv=None):
     p.add_argument('--init-mmdd', default='07-01') # <-- currently start with 07-01
     p.add_argument('--months', type=int, default=6)
     p.add_argument('--min-years', type=int, default=10)
-    p.add_argument('--stage', choices=('prepare', 'correlation', 'all'), default='all')
+    p.add_argument('--stage', choices=('prepare', 'deterministic', 'probabilistic','all'), default='all')
     args = p.parse_args(argv)
+
+    # Preparation & eval have separate input requirements.
+    prepare=args.stage in ('prepare', 'all')
+    run_deterministic=args.stage in ('deterministic', 'all')
+    run_probabilistic=args.stage in ('probabilistic', 'all')
 
     if args.start_yr > args.end_yr or args.months < 1:
         p.error('--min-years exceeds the requested number of years') 
@@ -48,16 +53,18 @@ def main(argv=None):
     except ValueError as exc:
         p.error(str(exc))
 
-    if args.stage != 'correlation' and (args.fcst_dir is None or args.retro_dir is None):
+    if args.stage != 'deterministic' and (args.fcst_dir is None or args.retro_dir is None):
         p.error('Preparing monthly data requires --fcst-dir and --retro-dir')
+
     out = args.output_dir.expanduser().resolve()
     cache_dir = out / '.work' / 'monthly'
     cache_dir.mkdir(parents=True, exist_ok=True)
     caches=[cache_dir/f'monthly_lead_{lead:02d}.nc' for lead in range(1, args.months+1)]
-    if args.stage != 'correlation':
+    
+    if args.stage != 'deterministic':
         if any(path.exists() for path in caches):
             raise FileExistsError(
-                'Monthly caches already exist; use correlation stage '
+                'Monthly caches already exist; use deterministic stage '
                 'or a new output directory'
             )
         retro_dir=args.retro_dir.expanduser().resolve()
@@ -94,10 +101,13 @@ def main(argv=None):
             write_netcdf(monthly, path)
             previous_grid=monthly[['lat', 'lon']].copy()
             previous_grid.attrs=dict(monthly.attrs)
+    
     if args.stage == 'prepare':
         print(f'Monthly caches ready: {cache_dir}')
         return
-    report={'stage': 'correlation', 'periods':[], 'min_years':args.min_years}
+    
+    report={'stage': f'{args.stage}', 'periods':[], 'min_years':args.min_years}
+    
     for lead, path in enumerate(caches, 1):
         tgt=out / f'corr_lead_{lead:02d}.nc'
         figs={
@@ -106,7 +116,7 @@ def main(argv=None):
         }
         if tgt.exists() or any(fig.exists() for fig in figs.values()):
             raise FileExistsError(
-                f'Correlation output exists for period {lead}; backup before rerunning'
+                f'deterministic output exists for period {lead}; backup before rerunning'
             )
 
         with xr.open_dataset(path, engine='h5netcdf') as source:
@@ -116,10 +126,12 @@ def main(argv=None):
                 *[f'fcst_{code}' for code in statistic.CODES],
                 *[f'retro_{code}' for code in statistic.CODES],
             ]
+            
             if source['year'].values.tolist() != list(initializations) or source.attrs.get('lead_month') != lead:
                 raise ValueError(
                     f'Cached years of lead period differ: {path}'
                 )
+            
             for year, init in initializations.items():
                 start, end=statistic.month_windows(init, lead)
                 for name, expected in [
@@ -127,16 +139,20 @@ def main(argv=None):
                     ('period_start', start),
                     ('period_end', end)
                 ]:
+                    
                     if source[name].sel(year=year).values != np.datetime64(expected, 'ns'):
                         raise ValueError(f'Cached {name} differs for {year}: {path}')
+            
             monthly=source[needed].load()
+        
         result=statistic.eval_monthly_deterministic(monthly, args.min_years)
         write_netcdf(result, tgt)
+        
         for code, fig in figs.items():
             plt_da=result[
                 [f'pearson_r_{code}', f'paired_years_{code}']
             ].rename({
-                f'pearson_r_{code}':'correlation',
+                f'pearson_r_{code}':'deterministic',
                 f'paired_years_{code}':'paired_yrs',
             })
             plt_da.attrs.update(result.attrs)
@@ -167,13 +183,26 @@ def main(argv=None):
                 },
             }
         )
-        print(f'Correlation period {lead} : {tgt}', flush=True)
+        print(f'deterministic period {lead} : {tgt}', flush=True)
         del monthly, result
 
     # The JSON accompanies the maps so sample coverage remains inspectable.
     temporary = out / 'deterministic_skill.json.partial'
     temporary.write_text(json.dumps(report, indent=2, allow_nan=False) + '\n')
     temporary.replace(out / 'deterministic_skill.json')
+
+    # Probabilistic skill metrics calculation
+    if args.stage == 'probabilistic':
+        test_window=[
+            year for year in range(2001, 2024+1)
+        ]
+        result=statistic.eval_monthly_probabilistic(monthly, test_window)
+        write_netcdf(result, tgt)
+
+        for code, fig in figs.items():
+            plt_da=result[
+
+            ]
 
 
 if __name__ == '__main__': 
