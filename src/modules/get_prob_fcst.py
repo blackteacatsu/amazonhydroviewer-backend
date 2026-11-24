@@ -55,7 +55,9 @@ def calculate_probabilities(
         quantiles : Sequence[float] = (1/3., 2/3.),
         *,
         # independent quantiles? 
-        mask_zeros: bool = True
+        climatology_dims : list[str]=['ensemble', 'time'],
+        mask_zeros: bool = True,
+        thresholds=None
 ) -> xr.DataArray:
     """
     Calculate tercile category probability exceedance for ensemble forecast.
@@ -78,29 +80,39 @@ def calculate_probabilities(
     """
 
     print('\n Computing probabilities...')
-    numcategories = len(quantiles) + 1  # 3 categories for terciles
 
-    # Some legacy products encode missing cells as zero. Real zero precipitation,
-    # however, is meaningful for wildfire risk, so callers can retain zeros.
-    fcst_masked = fcst.where(fcst != 0) if mask_zeros else fcst
+    if thresholds is None:
+        numcategories = len(quantiles) + 1  # 3 categories for terciles
 
-    # Rechunk once for the quantile operation and compute all quantile edges once.
-    q_dims = [d for d in ['ensemble', 'time'] if d in hcst.dims]
-    if not q_dims:
-        raise Exception(f"Expected at least one of ['ensemble', 'time'] in hcst dims, got {hcst.dims}")
-    if hasattr(hcst, 'chunks') and hcst.chunks is not None:
-        hcst = hcst.chunk({d: -1 for d in q_dims})
-    q_edges = hcst.quantile(quantiles, dim=q_dims)
+        # Some legacy products encode missing cells as zero. Real zero precipitation,
+        # however, is meaningful for wildfire risk, so callers can retain zeros.
+        fcst_masked = fcst.where(fcst != 0) if mask_zeros else fcst
+
+        # Rechunk once for the quantile operation and compute all quantile edges once.
+        q_dims = [d for d in climatology_dims if d in hcst.dims]
+        if not q_dims:
+            raise Exception(f"Expected at least one of ['ensemble', 'time'] in hcst dims, got {hcst.dims}")
+        if hasattr(hcst, 'chunks') and hcst.chunks is not None:
+            hcst = hcst.chunk({d: -1 for d in q_dims})
+
+        q_edges = hcst.quantile(quantiles, dim=q_dims)
+
+    else:
+        q_edges=thresholds
 
     l_probs = []
     for icat in range(numcategories):
         print(f' Category={icat}')
+
+        # For below normal category
         if icat == 0:
             h_lo = -np.inf
             h_hi = q_edges.sel(quantile=quantiles[0])
+        # Above normal category
         elif icat == len(quantiles):
             h_lo = q_edges.sel(quantile=quantiles[-1])
             h_hi = np.inf
+        # For near normal category
         else:
             h_lo = q_edges.sel(quantile=quantiles[icat - 1])
             h_hi = q_edges.sel(quantile=quantiles[icat])
@@ -112,7 +124,10 @@ def calculate_probabilities(
             h_hi = h_hi.drop_vars('quantile')
 
         # Count fraction of ensemble members in this category.
-        prob = np.logical_and(fcst_masked > h_lo, fcst_masked <= h_hi).sum('ensemble') / float(fcst_masked.sizes['ensemble'])
+        prob = (
+            np.logical_and(fcst_masked > h_lo, fcst_masked <= h_hi).sum('ensemble') 
+            / float(fcst_masked.sizes['ensemble'])
+        )
         l_probs.append(prob.assign_coords({'category': icat}))
     
     probs = xr.concat(l_probs, dim='category')

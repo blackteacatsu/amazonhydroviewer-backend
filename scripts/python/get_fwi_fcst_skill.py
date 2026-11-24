@@ -39,12 +39,17 @@ def main(argv=None):
     run_deterministic=args.stage in ('deterministic', 'all')
     run_probabilistic=args.stage in ('probabilistic', 'all')
 
-    if args.start_yr > args.end_yr or args.months < 1:
-        p.error('--min-years exceeds the requested number of years') 
-    if args.min_years < 3:
-        p.error('--min-years must be at least 3')
-    if args.stage != 'prepare' and args.min_years > args.end_yr - args.start_yr + 1:
-        p.error('--min-years exceeds the requested number of years')
+    if args.start_yr > args.end_yr:
+        p.error('--start-yr must not exceed --end-yr') 
+
+    if args.months < 1:
+        p.error('--months must be at least 1')
+    if run_deterministic:
+        if args.min_years < 3:
+            p.error('--min-years must be at least 3')
+        if args.min_years > args.end_yr - args.start_yr + 1:
+            p.error('--min-years exceeds the requested number of years')
+
     try:
         initializations = {
             year : date.fromisoformat(f'{year}-{args.init_mmdd}')
@@ -64,8 +69,8 @@ def main(argv=None):
     if prepare:
         if any(path.exists() for path in caches):
             raise FileExistsError(
-                'Monthly caches already exist; use deterministic stage '
-                'or a new output directory'
+                'Monthly caches already exist; use --stage deterministic '
+                'or --stage probabilistic, or a new output directory.'
             )
         retro_dir=args.retro_dir.expanduser().resolve()
         fcst_dir=args.fcst_dir.expanduser().resolve()
@@ -116,21 +121,25 @@ def main(argv=None):
         print(f'Monthly caches ready: {cache_dir}')
         return
     
-    report={'stage': f'{args.stage}', 'periods':[], 'min_years':args.min_years}
+    det_report={'stage': f'{args.stage}', 'periods':[], 'min_years':args.min_years}
+    prob_report={'stage': f'{args.stage}', 'periods':[],}
     
     for lead, path in enumerate(caches, 1):
         tgt=out / f'corr_lead_{lead:02d}.nc'
-        # figs={
-        #     code: out / f'corr_lead_{lead:02d}_{code}.png'
-        #     for code in statistic.CODES
-        # }
+        det_path = out / f"corr_lead_{lead:02d}.nc"
+        prob_path = out / f"probabilistic_lead_{lead:02d}.nc"
 
-        if tgt.exists(): #or any(fig.exists() for fig in figs.values()):
-            raise FileExistsError(
-                f'Deterministic output exists for period {lead}; backup before rerunning'
-            )
+        # Protect only the outputs requested by this run.
+        for enabled, tgt in (
+            (run_deterministic, det_path),
+            (run_probabilistic, prob_path)
+        ):
+            if enabled and tgt.exists(): 
+                raise FileExistsError(
+                    f'Output already exits: {tgt}; backup before rerunning'
+                )
 
-        # Load cache flies
+        # Load cached 24-year monthly data flies
         with xr.open_dataset(path, engine='h5netcdf') as source:
             needed=[
                 'member_present',
@@ -162,92 +171,74 @@ def main(argv=None):
             result_det=statistic.eval_monthly_deterministic(monthly, args.min_years)
             write_netcdf(result_det, out / f'corr_lead_{lead:02d}.nc')
 
+            det_report['periods'].append(
+                {
+                    'lead_month': lead,
+                    'skill metrics type': 'deterministic', 
+                    'cache': str(path),
+                    'member_counts': monthly['member_count'].values.tolist(),
+                    'codes': {
+                        code: {
+                            'finite_correlation_cells': int(
+                                np.isfinite(result_det[f'pearson_r_{code}']).sum().item()
+                            ),
+                            'paired_years_min': int(
+                                result_det[f'paired_years_{code}'].min().item()
+                            ),
+                            'paired_years_max': int(
+                                result_det[f'paired_years_{code}'].max().item()
+                            ),
+                        } 
+                        for code in statistic.CODES
+                    },
+                }
+            )
+            print(f'Deterministic period {lead} : {det_path}', flush=True)
+            del result_det
+            
+            # The JSON accompanies the maps so sample coverage remains inspectable.
+            temporary = out / 'deterministic_skill.json.partial'
+            temporary.write_text(json.dumps(det_report, indent=2, allow_nan=False) + '\n')
+            temporary.replace(out / 'deterministic_skill.json')
+
+
         if run_probabilistic:
             # Evaluate all years in the validated monthly cache.
             test_window=monthly['year'].values.tolist()
             result_prob=statistic.eval_monthly_probabilistic(monthly, test_window)
             write_netcdf(result_prob, out / f'probabilistic_lead_{lead:02d}.nc')
-
-        del monthly
-
-        # Write reports after every lead has finished.
-
-        # for code, fig in figs.items():
-        #     plt_da=result_det[
-        #         [
-        #             f'pearson_r_{code}', 
-        #             f'rmse_{code}',
-        #             f'bias_{code}',
-        #             f'paired_years_{code}',
-        #         ]
-        #     ].rename({
-        #         f'pearson_r_{code}':'correlation',
-        #         f'rmse_{code}': 'rmse',
-        #         f'bias_{code}': 'bias',
-        #         f'paired_years_{code}':'paired_yrs',
-        #     })
-        #     plt_da.attrs.update(result_det.attrs)
-        #     plt_da.attrs['code']=code
-        #     statistic.plot_corr(plt_da, fig)
-
-        report['periods'].append(
-            {
-                'lead_month': lead,
-                'cache': str(path),
-                'member_counts': monthly['member_count'].values.tolist(),
-                'codes': {
-                    code: {
-                        'finite_correlation_cells': int(
-                            np.isfinite(result_det[f'pearson_r_{code}']).sum().item()
-                        ),
-                        'paired_years_min': int(
-                            result_det[f'paired_years_{code}'].min().item()
-                        ),
-                        'paired_years_max': int(
-                            result_det[f'paired_years_{code}'].max().item()
-                        ),
-                    } 
-                    for code in statistic.CODES
-                },
-            }
-        )
-        print(f'Deterministic period {lead} : {tgt}', flush=True)
-        del result_det
-
-        # The JSON accompanies the maps so sample coverage remains inspectable.
-        temporary = out / 'deterministic_skill.json.partial'
-        temporary.write_text(json.dumps(report, indent=2, allow_nan=False) + '\n')
-        temporary.replace(out / 'deterministic_skill.json')
-
-        report['periods'].append(
-            {
-                'lead_month': lead,
-                'cache': str(path),
-                'verification_years': test_window,
-                'code':{
-                    code:{
-                        'finite_skill_cells': int(
-                            np.isfinite(result_prob[f'rpss_d_{code}']).sum().item
-                        ),
-                        'valid_year_min': int(
-                            result_prob[f'valid_year_count_{code}'].min().item()
-                        ),
-                        'valid_year_max': int(
-                            result_prob[f'valid_year_count_{code}'].max().item()
-                        ),
-                    }
-                    for code in statistic.CODES
-                },
-            }
-        )
-        print(f'Probabilistic period {lead} : {tgt}', flush=True)
-        del result_prob
-
-        # The JSON accompanies the maps so sample coverage remains inspectable.
-        temporary = out / 'probabilistic_skill.json.partial'
-        temporary.write_text(json.dumps(report, indent=2, allow_nan=False) + '\n')
-        temporary.replace(out / 'probabilistic_skill.json')
         
+            prob_report['periods'].append(
+                {
+                    'lead_month': lead,
+                    'skill metrics type': 'probabilistic', 
+                    'cache': str(path),
+                    'verification_years': test_window,
+                    'codes':{
+                        code:{
+                            'finite_skill_cells': int(
+                                np.isfinite(result_prob[f'rpss_d_{code}']).sum().item()
+                            ),
+                            'valid_year_min': int(
+                                result_prob[f'valid_year_count_{code}'].min().item()
+                            ),
+                            'valid_year_max': int(
+                                result_prob[f'valid_year_count_{code}'].max().item()
+                            ),
+                        }
+                        for code in statistic.CODES
+                    },
+                }
+            )
+            print(f'Probabilistic period {lead} : {prob_path}', flush=True)
+            del result_prob
+
+            # The JSON accompanies the maps so sample coverage remains inspectable.
+            temporary = out / 'probabilistic_skill.json.partial'
+            temporary.write_text(json.dumps(prob_report, indent=2, allow_nan=False) + '\n')
+            temporary.replace(out / 'probabilistic_skill.json')
+        
+        del monthly
 
 if __name__ == '__main__': 
 

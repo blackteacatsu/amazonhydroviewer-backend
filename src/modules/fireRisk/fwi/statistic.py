@@ -318,6 +318,10 @@ def eval_monthly_deterministic(
     """
     if min_years < 3:
         raise ValueError('Require at least three paired years')
+    
+    # Discern number of ensemble member presented in the dataset:
+    # ex. a forecast with one-ensemble member is [1, 0, 0, 0, 0, 0, 0],
+    # a forecast with one-ensemble member is [1, 1, 1, 1, 1, 1, 1],
     present=monthly['member_present'] == 1
     member_count=monthly['member_count']
     
@@ -329,18 +333,19 @@ def eval_monthly_deterministic(
         actual_finite=np.isfinite(members) | ~present
         complete=actual_finite.all('ensemble') & (member_count > 0)
 
-        # Ensemble avg of forecast
+        # Ensemble avg of forecast while respecting actual member presence.
         fcst=(
             members.where(present).sum('ensemble', skipna=True) 
             / member_count
         ).where(complete)
         retro=monthly[f'retro_{code}']
-
-
-        # Both series must use exactly the sam eyears for means and covariance
+                
+        # Apply one paired-value mask for every metric.
+        # Both series must use exactly the same years for means and covariance.
         paired=np.isfinite(fcst) & np.isfinite(retro)
         fcst, retro=fcst.where(paired), retro.where(paired)
-        
+
+        # Compute ACC, RMSE, bias, sample counts, and confidence intervals.
         n=paired.sum('year').astype('int32')
         dx=fcst - fcst.mean(dim='year', skipna=True)
         dy=retro - retro.mean(dim='year', skipna=True)
@@ -396,158 +401,268 @@ def eval_monthly_deterministic(
     )
     return result
 
-        
-        # for code in CODES:
-        #     # Form ensemble means while respecting actual member presence.
-        #     fcst=(
-        #         monthly[f'fcst_{code}'].where(present).sum('ensemble', skipna=True) 
-        #         / monthly['member_count']
-        #     )
-        #     fcst=fcst.where(complete)
-        #     retro=monthly[f'retro_{code}']
 
-            # Apply one paired-value mask for every metric.
-
-            # Compute ACC, RMSE, bias, sample counts, and confidence intervals.
+def eval_monthly_probabilistic(
+        monthly : xr.Dataset,
+        test_window : list[int],
+)->xr.Dataset:
+    """
+    Parameters
+    ----------
+        monthly : xr.Dataset
+            Cover the monthly average data over 24 year for that specific month, 
+            ex. lead time 03 for jul01 initialized data correspond to September.
 
 
-
-
-# def eval_monthly_probabilistic(
-#         monthly : xr.Dataset,
-#         training_years : list[int],
-#         verification_years : list[int],
-# )->xr.Dataset:
-#     """
-#     Parameters
-#     ----------
-#         monthly : xr.Dataset
-#         training_years : list of int
-#             selects the historical data used to 
-#             generate tercile threshold & climatologies
-#         verification_years : list of int
-#             selects the forecast probabilities and matching 
-#             retrospective outcomes used to calculate RPSS.
-#     """
-
-#     for t_year, v_year in zip(training_years, verification_years):
-#         if t_year == v_year:
-#             raise ValueError(
-#                 f'Invalid time window selection: the two overlaps {t_year, v_year}'
-#             )
-#     if training_years[:-1] > verification_years[0]:
-#         raise ValueError(
-#             f'Verification years({verification_years[0]}) predates training years({training_years[:-1]})' 
-#         )
-
-#     present=monthly['member_present']==1
-#     member_count=monthly['member_count']
-#     outputs={}
-
+        test_window : list of int
+            ex. [2017, 2018, 2019, 2020, ...]
+    """
+    if test_window is None or len(test_window) == 0 :
+        raise ValueError(
+            'Invalid test_window values, test years ' \
+            'cannot be None and must be explicitly defined.'
+        )
     
-#     ds_t = monthly.sel(year=training_years) # <-- ds of training yrs
-#     ds_v = monthly.sel(year=verification_years) # <-- ds of verification yra
 
-#     for code in CODES:
-#         fcst_t=ds_t[f'fcst_{code}']
-#         retro_t=ds_t[f'retro_{code}']
+    present=monthly['member_present']==1 
+    outputs={}
 
-#         fcst_v=ds_v[f'fcst_{code}']
-#         retro_v=ds_v[f'retro_{code}']
-
-#         yearly_scores = []
-#         for year in monthly['year'].values:
-            
-#             # Calculate tercile thresholds for this monthly period.
-#             threshold_v=get_thresh(
-#                 icat=3, 
-#                 quantiles=[1/3, 2/3], 
-#                 xrds=retro_v['year'==year], 
-#                 dims=['ensemble', 'year']
-#             )
-#             threshold_t=get_thresh(
-#                 icat=3, 
-#                 quantiles=[1/3, 2/3], 
-#                 xrds=retro_v['year'==year], 
-#                 dims=['ensemble', 'year']
-#             )
-
-#             fcst_prob=calculate_probabilities(
-#                 hcst=fcst_t,
-#                 fcst=fcst_v,
-#             )
-
-#             # 3. Categorize each forecast member and the retrospective value.
-
-
-#             # 4. Calculate all three forecast category probabilities.
-
-
-#             # 5. Calculate forecast RPS and climatological-reference RPS.
-#             dx=fcst_prob.sel(year=year) - historical_prob.sel(year=year)
-#             # dy=
-#             rps_fcst=
-#             rps_clim=np.sum()
-
-#             # 6. Retain the ensemble-size correction and valid-case mask.
-#             debiased=(member_count**2 - 1)/(6 * 3 * member_count)
-
-#             pass
-
-#         # Aggregate scores over the same valid verification years.
-
-#         # Calculate debiased RPSS from aggregated scores
-#         rpss=(1-(rps_fcst / (rps_clim + debiased)))
+    for code in CODES: # Iterate through all components of the FWI system
         
-#         # Apply the minimum verification-year requirement.
-#         rpss=
+        """
+        Pool all retrospective member across all years together.
+        Establish retrospective thresholds and climatological probabilities.
+        
+        Since retrospective data only has a single ensemble member,
+        therefore calculate_probabilities returns a binary indication 
+        vector of the following shape: [0, 1, 0]
+        """
+        pool_retro=monthly[f'retro_{code}']
+        observed_all=calculate_probabilities(
+            hcst=pool_retro,
+            fcst=pool_retro.expand_dims(ensemble=[0]),
+            climatology_dims=['year'],
+            mask_zeros=False,
+        )
+        
+        # Preserve missing observation instead of filling with zero probability
+        observed_all=observed_all.where(
+            np.isfinite(pool_retro)
+        )
+        observed=observed_all.sel(year=test_window)
 
-#         # Add results to outputs.
-#         variables[f'rpss_{code}']=rpss
+        # Pool all presented forecast members across all years.    
+        # all members together once per component and monthly period:
+        pooled_fcst=monthly[f'fcst_{code}'].where(present)
 
-#     # Return all fields in one xr.Dataset
-#     result=xr.Dataset(outputs)
-#     result.attrs.update(
-#         min_paired_years='',
-#     )
-#     return result
+        quantile_pool=pooled_fcst
+        if quantile_pool.chunks is not None:
+            quantile_pool=quantile_pool.chunk({'year':-1, 'ensemble':-1})
 
-def plot_corr(result:xr.Dataset, path:Path)->None:
-    """Plot coefficient and sample count with a fixed correlation color scale."""
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
+        fcst_thresholds=quantile_pool.quantile(
+            [1 / 3, 2 / 3],
+            dim=('year', 'ensemble')
+        ).compute
+        
+        annual_sum_cat_brier = [] 
+        annual_correction=[]
 
-    fig, axes=plt.subplots(1, 2, figsize=(11, 4))
-    geo=np.isfinite(result['lat']) & np.isfinite(result['lon'])
-    for ax, name in zip(axes, ('correlation', 'paired_yrs')):
-        valid=geo & np.isfinite(result[name])
-        opts={
-            'cmap': 'RdBu_r', 
-            'vmin': -1, 
-            'vmax': 1
-        } if name == 'correlation' else {
-            'cmap': 'viridis', 
-            'vmin': 0
+        for year in test_window:
+            
+            """
+            Filter to get all presented ensemble members in monthly averaged
+            forecast for this month and eventually active forecast for this specific 
+            year. These lines are included because forecast prior to 2017 has only
+            1 ensemble member whereas those later than 2017 has 7 ensemble members.
+            """
+
+            # Extract and treat values for a particular year as active forecast
+            active_ensemble=monthly['ensemble'].values[
+                present.sel(year=year).values
+            ]
+            active_fcst=(
+                monthly[f'fcst_{code}']
+                .sel(year=year, drop=True)
+                .sel(ensemble=active_ensemble)
+            )
+
+            # Calculate this year's forecast tercile thresholds & category probabilities.
+            fcst_prob=calculate_probabilities(
+                hcst=pooled_fcst,
+                fcst=active_fcst,
+                climatology_dims=('year', 'ensemble'),
+                mask_zeros=False,
+                thresholds=fcst_thresholds
+            )
+
+            # Find the retrospective probabilities with matching time period.
+            obs_prob=observed.sel(year=year, drop=True)
+            fcst_prob, obs_prob=xr.align(fcst_prob, obs_prob, join='exact')
+
+            valid=(
+                np.isfinite(active_fcst).all('ensemble') &
+                np.isfinite(pooled_fcst).any(('year', 'ensemble')) &
+                np.isfinite(obs_prob).all('category')
+            )
+
+            fcst_cdf=fcst_prob.cumsum('category', skipna=False)
+            obs_cdf=obs_prob.cumsum('category', skipna=False)
+
+            # Calculate forecast RPS and climatological-reference RPS.
+            sum_cat_brier=(
+                (fcst_cdf - obs_cdf)**2
+            ).sum(dim='category', skipna=True).where(valid)
+
+            annual_sum_cat_brier.append(sum_cat_brier.expand_dims(year=[year]))
+
+            """
+            Prepare components for the correction factors in RPSS_D
+            -------------------------------------------------------
+            num_cat (K): number of tercile category
+            member_count (M): number of ensemble members
+            """
+            num_cat=fcst_prob.sizes['category']
+            member_count=active_fcst.sizes['ensemble']
+            correction=(num_cat**2 - 1) / (6*num_cat*member_count)
+
+            annual_correction.append(
+                xr.full_like(sum_cat_brier, correction)
+                .where(valid)
+                .expand_dims(year=[year])
+            )
+
+        # Average each score across the same verification years.
+        sum_cat_brier=xr.concat(annual_sum_cat_brier, dim='year')
+        rps_fcst=sum_cat_brier.mean(dim='year', skipna=True)
+
+        # Find the average correction factor of the current test window        
+        correction_factor=xr.concat(annual_correction, dim='year')
+        mean_correction=correction_factor.mean(dim='year', skipna=True)
+        
+        
+        # Expected cumulative RPS for equally likely tercile outcomes.
+        rps_clim= 4.0 / 9.0 # <-- normalized category score
+
+        # Calculate RPSS from the two average scores.
+        rpss_d=(
+            1 - rps_fcst / (rps_clim + mean_correction)
+        )
+
+        # Store the final skill score separately from its underlying RPS.
+        outputs[f'rpss_d_{code}']=rpss_d.assign_attrs(
+            long_name=f'{code.upper()} debiased corrected rank probability skill score',
+            units='1'
+        )
+        outputs[f'rps_forecast_{code}']=rps_fcst.assign_attrs(
+            long_name=f'{code.upper()} forecast ranked probability score',
+            units='1'
+        )
+        outputs[f'rps_debiased_factor_{code}']=mean_correction.assign_attrs(
+            long_name=f'{code.upper()} ensemble-size correction factor,' 
+            'averaged over valid verification years.',
+            units='1',
+        )
+
+        # Retain yearly diagnostics so the final score can be reproduced.
+        outputs[f'rps_forecast_yearly_{code}']=sum_cat_brier
+        outputs[f'rps_correction_yearly_{code}']=correction_factor
+        outputs[f'valid_year_count_{code}']=sum_cat_brier.count('year')
+
+
+    # Initiate output xr.Dataset
+    result=xr.Dataset(outputs)
+
+    # The reference is shared by al components and grid cells.
+    result['rps_climatology']=xr.DataArray(
+        4.0 / 9.0,
+        attrs={
+            'long_name':'Expected climatological ranked probability score',
+            'description':'Equal-probability terciles; unnormalized cumulative RPS.'
+            'Theoretical climatology probabilities, p=[1/3, 1/3, 1/3]',
+            'units':'1',
         }
-        artist=ax.scatter(
-            result['lon'].values[valid.values],
-            result['lat'].values[valid.values],
-            c=result[name].values[valid.values],
-            s=1,
-            rasterized=True,
-            **opts
-        )
-        fig.colorbar(artist, ax=ax)
-        ax.set(
-            title=name.replace('_', ' ').title(),
-            xlabel='longitude',
-            ylabel='latitude',
-        )
-    fig.suptitle(
-        f'Monthly {result.attrs["code"].upper()} verification — '
-        f'period {result.attrs["lead_month"]}'
     )
-    fig.tight_layout()
-    fig.savefig(path, dpi=160)
-    plt.close(fig)
+
+    # Record the actual ensemble size for each evaluated initialization year.
+    result['member_count']=(
+        present.sel(year=test_window)
+        .sum('ensemble')
+        .astype('int32')
+    )
+
+    result.attrs["forecast_threshold_weighting"] = (
+    "Equal weight per available year-member sample; "
+    "years with more members contribute more samples"
+    )
+    result.attrs["retrospective_threshold_weighting"] = (
+        "Equal weight per available year"
+    )
+
+    # Preserve monthly preparation metadata and doc the verification method.
+    result.attrs.update(monthly.attrs)
+    result.attrs.update(
+        verification_metrics='RPSS_D',
+        verification_years=','.join(str(year) for year in test_window),
+        score_aggregation='Mean RPS and mean correction over valid verification years',
+        tercile_threshold_method='Separate pooled forecast and retrospective quantiles',
+        climatological_reference='Theoretical expected cumulative RPS: 4/9',
+    )
+
+    return result
+
+
+# def plot_corr(result:xr.Dataset, path:Path)->None:
+#     """Plot coefficient and sample count with a fixed correlation color scale."""
+#     import matplotlib
+#     matplotlib.use('Agg')
+#     import matplotlib.pyplot as plt
+
+#     fig, axes=plt.subplots(1, 3, figsize=(16.5, 4))
+#     geo=np.isfinite(result['lat']) & np.isfinite(result['lon'])
+#     for ax, name in zip(axes, ('correlation', 'rmse', 'bias')):
+#         valid=geo & np.isfinite(result[name])
+#         opts={
+#             'cmap': 'RdBu_r', 
+#             'vmin': -1, 
+#             'vmax': 1
+#         } if name == 'correlation' else {
+#             'cmap': 'viridis', 
+#             'vmin': 0
+#         }
+#         artist=ax.scatter(
+#             result['lon'].values[valid.values],
+#             result['lat'].values[valid.values],
+#             c=result[name].values[valid.values],
+#             s=1,
+#             rasterized=True,
+#             **opts
+#         )
+#         fig.colorbar(artist, ax=ax)
+#         ax.set(
+#             title=name.replace('_', ' ').title(),
+#             xlabel='longitude',
+#             ylabel='latitude',
+#         )
+#     fig.suptitle(
+#         f'Monthly {result.attrs["code"].upper()} verification — '
+#         f'period {result.attrs["lead_month"]}'
+#     )
+#     fig.tight_layout()
+#     fig.savefig(path, dpi=160)
+#     plt.close(fig)
+
+
+# def plot_corr(result:xr.Dataset, path:Path)->None:
+#     """Plot Ranked Probabilistic skill score """
+#     import matplotlib
+#     matplotlib.use('Agg')
+#     import matplotlib.pyplot as plt
+
+#     fig, axes=plt.subplots(1, 3, figsize=(16.5, 4))
+#     geo=np.isfinite(result['lat']) & np.isfinite(result['lon'])
+
+#     for ax, name in zip(axes, ('rpss_d', 'rps')):
+
+
+
+#     plt.close(fig)
