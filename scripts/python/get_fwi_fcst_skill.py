@@ -30,7 +30,9 @@ def main(argv=None):
     p.add_argument('--end-yr', type=int, default=2024)
     p.add_argument('--init-mmdd', default='07-01') # <-- currently start with 07-01
     p.add_argument('--months', type=int, default=6)
-    p.add_argument('--min-years', type=int, default=10)
+    p.add_argument('--min-years', type=int, default=10, 
+        help='Minimum valid paired-year between retrospective and forecast required for deterministic skill metrics.'
+    )
     p.add_argument('--stage', choices=('prepare', 'deterministic', 'probabilistic','all'), default='all')
     args = p.parse_args(argv)
 
@@ -105,14 +107,14 @@ def main(argv=None):
             if previous_grid is not None:
                 statistic.same_grid(previous_grid, monthly)
                 statistic.same_configuration(previous_grid, monthly)
-
             expected_members=member_ids
+
+            # Package and write monthly cache data files
             monthly.attrs.update(
                 fcst_dir=str(fcst_dir),
                 retro_dir=str(retro_dir),
             )
-
-            write_netcdf(monthly, path)
+            write_netcdf(monthly, path) 
             
             previous_grid=monthly[['lat', 'lon']].copy()
             previous_grid.attrs=dict(monthly.attrs)

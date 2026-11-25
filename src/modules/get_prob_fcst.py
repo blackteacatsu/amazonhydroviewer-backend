@@ -80,14 +80,14 @@ def calculate_probabilities(
     """
 
     print('\n Computing probabilities...')
+    numcategories = len(quantiles) + 1  # 3 categories for terciles
 
+    # Some legacy products encode missing cells as zero. Real zero precipitation,
+    # however, is meaningful for wildfire risk, so callers can retain zeros.
+    fcst_masked = fcst.where(fcst != 0) if mask_zeros else fcst
+
+    # Check for recycled quantile thresholds
     if thresholds is None:
-        numcategories = len(quantiles) + 1  # 3 categories for terciles
-
-        # Some legacy products encode missing cells as zero. Real zero precipitation,
-        # however, is meaningful for wildfire risk, so callers can retain zeros.
-        fcst_masked = fcst.where(fcst != 0) if mask_zeros else fcst
-
         # Rechunk once for the quantile operation and compute all quantile edges once.
         q_dims = [d for d in climatology_dims if d in hcst.dims]
         if not q_dims:
@@ -96,7 +96,6 @@ def calculate_probabilities(
             hcst = hcst.chunk({d: -1 for d in q_dims})
 
         q_edges = hcst.quantile(quantiles, dim=q_dims)
-
     else:
         q_edges=thresholds
 

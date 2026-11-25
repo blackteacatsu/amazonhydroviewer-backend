@@ -462,7 +462,7 @@ def eval_monthly_probabilistic(
         fcst_thresholds=quantile_pool.quantile(
             [1 / 3, 2 / 3],
             dim=('year', 'ensemble')
-        ).compute
+        ).compute()
         
         annual_sum_cat_brier = [] 
         annual_correction=[]
@@ -609,60 +609,3 @@ def eval_monthly_probabilistic(
     )
 
     return result
-
-
-# def plot_corr(result:xr.Dataset, path:Path)->None:
-#     """Plot coefficient and sample count with a fixed correlation color scale."""
-#     import matplotlib
-#     matplotlib.use('Agg')
-#     import matplotlib.pyplot as plt
-
-#     fig, axes=plt.subplots(1, 3, figsize=(16.5, 4))
-#     geo=np.isfinite(result['lat']) & np.isfinite(result['lon'])
-#     for ax, name in zip(axes, ('correlation', 'rmse', 'bias')):
-#         valid=geo & np.isfinite(result[name])
-#         opts={
-#             'cmap': 'RdBu_r', 
-#             'vmin': -1, 
-#             'vmax': 1
-#         } if name == 'correlation' else {
-#             'cmap': 'viridis', 
-#             'vmin': 0
-#         }
-#         artist=ax.scatter(
-#             result['lon'].values[valid.values],
-#             result['lat'].values[valid.values],
-#             c=result[name].values[valid.values],
-#             s=1,
-#             rasterized=True,
-#             **opts
-#         )
-#         fig.colorbar(artist, ax=ax)
-#         ax.set(
-#             title=name.replace('_', ' ').title(),
-#             xlabel='longitude',
-#             ylabel='latitude',
-#         )
-#     fig.suptitle(
-#         f'Monthly {result.attrs["code"].upper()} verification — '
-#         f'period {result.attrs["lead_month"]}'
-#     )
-#     fig.tight_layout()
-#     fig.savefig(path, dpi=160)
-#     plt.close(fig)
-
-
-# def plot_corr(result:xr.Dataset, path:Path)->None:
-#     """Plot Ranked Probabilistic skill score """
-#     import matplotlib
-#     matplotlib.use('Agg')
-#     import matplotlib.pyplot as plt
-
-#     fig, axes=plt.subplots(1, 3, figsize=(16.5, 4))
-#     geo=np.isfinite(result['lat']) & np.isfinite(result['lon'])
-
-#     for ax, name in zip(axes, ('rpss_d', 'rps')):
-
-
-
-#     plt.close(fig)
