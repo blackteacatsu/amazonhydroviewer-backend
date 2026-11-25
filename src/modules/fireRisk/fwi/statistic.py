@@ -557,7 +557,7 @@ def eval_monthly_probabilistic(
             long_name=f'{code.upper()} forecast ranked probability score',
             units='1'
         )
-        outputs[f'rps_debiased_factor_{code}']=mean_correction.assign_attrs(
+        outputs[f'rps_debiase_factor_{code}']=mean_correction.assign_attrs(
             long_name=f'{code.upper()} ensemble-size correction factor,' 
             'averaged over valid verification years.',
             units='1',
