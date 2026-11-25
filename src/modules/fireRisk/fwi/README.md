@@ -8,15 +8,25 @@ This file documents the FWI by its components
 
 ### Codespace at a glance
 
+## Components of the Canadian FWI System
+
 ### Fine Fuel Moisture Code (FFMC)
 
-### Duff Moisture Code
+Consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. **Ut enim ad minim veniam**, quis nostrud exercitation _ullamco laboris_ nisi ut aliquip ex ea commodo consequat.
 
-# Amazon LDAS FWI Verification
+### Duff Moisture Code (DMC)
+
+Consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. **Ut enim ad minim veniam**, quis nostrud exercitation _ullamco laboris_ nisi ut aliquip ex ea commodo consequat.
+
+### Drought Code (DC)
+
+Consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. **Ut enim ad minim veniam**, quis nostrud exercitation _ullamco laboris_ nisi ut aliquip ex ea commodo consequat.
+
+# Amazon LDAS Forecast Verification
 
 ## Introduction
 
-The verification processes will follows the methods outlined in Kansara et al., 2026.
+The verification processes will follows the methods outlined in Kansara et al., 2026. This section is implemented to test the skill of FWI forecast using the Amazon LDAS.
 
 ## Spatial Agreement between retrospective & forecast [Roebber, 2009]
 
@@ -24,17 +34,33 @@ Spatial agreement between the forecasted and retrospective drought extents is ev
 
 ### Probability of detection (POD)
 
+The POD measures the
+
 ### False alarm ratio (FAR)
 
-## To start the runner
+The FAR measures the
+
+### Critical success index (CSI)
+
+Consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. **Ut enim ad minim veniam**, quis nostrud exercitation _ullamco laboris_ nisi ut aliquip ex ea commodo consequat.
+
+## To start the runner - `get_fwi_fcst_skill.py`
+
+> [!NOTE]
+> This workflow requires python installed in the working environment later than 3.12 .
+> Run the following to check before proceeding.
+>
+> ```shell
+> conda activate WORKING_VENV_NAME
+> python --version
+> ```
 
 Run this snippet w/ the write working environment activated:
 
 ```bash
 conda activate analytics
-python --version # make sure it is 3.12+
 
-results_root=/mnt/vast/ksu/lis_products/fwi_amazon/fcst_skill_deterministic # change metrics type
+results_root=/mnt/vast/ksu/lis_products/fwi_amazon/fcst_skill_deterministic # change metrics type accordingly
 run_dir="$results_root/original_dc_trial_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$results_root"
 
@@ -58,11 +84,11 @@ echo "Log: $run_dir.log"
 tail -f "$run_dir.log"
 ```
 
-When `--months 1`, for july 1 initialization, this represents the monthly means of July 2-31, correlated across initialization years.
+When `--months 1`, for july 1 initialization, this represents the monthly means of July 2-31, correlated across initialization years. Try, `--months 3` and `--months 6` for longer lead-time into the future.
 
-Try, `--months 3` and `--months 6` for longer lead-time into the future.
+### Out-of-box snippet for `soilMoist_dc` drought code variant:
 
-Snippet for `soilMoist_dc` method:
+Copy-paste the code below into command line to run the deterministic skill tests for the LDAS-FWI forecast
 
 ```bash
 conda activate analytics
@@ -136,7 +162,8 @@ RMSE = \sqrt{\frac{1}{N}\sum_y(F_y-R_y)^2}, \quad \text{Bias} = \frac{1}{N}\sum_
 ### Uncertainty
 
 ```math
-z=\operatorname{atanh}(r),\qquad
+z=\text{atanh}(r),\qquad
+
 CI_{95\%}=\tanh\left(z\pm\frac{1.96}{\sqrt{N-3}}\right).
 ```
 
@@ -214,7 +241,7 @@ For $RPSS_D$, higher is better. Since small forecast error makes fraction smalle
 
 The main assumption is that **below-normal, near-normal, and above-normal are defined as three equally probable parts of a reference climate distribution**.
 
-That requires distinguishing the definition from how well your data support it:
+That requires distinguishing the definition from how well the data support it:
 
 - **Tercile thresholds:** the boundaries are the reference distribution’s \(1/3\) and \(2/3\) quantiles.
 - **Matching climate context:** thresholds apply to the same variable, grid cell, and target month. For forecast thresholds, also keep initialization and lead time consistent.
@@ -222,20 +249,26 @@ That requires distinguishing the definition from how well your data support it:
 - **No extra predictive information:** climatology assigns the same probabilities regardless of that year’s initialization conditions, ENSO state, or forecast.
 - **Ties need attention:** exact equal probabilities follow naturally for a continuous distribution. Repeated values—especially zero FWI—can prevent fixed thresholds from putting exactly one-third of observations into each category.
 
-**Your forecast ensemble does not need equal numbers of members in each category.** The `[1/3, 1/3, 1/3]` vector describes the climatological reference, not the active forecast.
+**Forecast ensemble does not need equal numbers of members in each category.** The `[1/3, 1/3, 1/3]` vector describes the climatological reference, not the active forecast.
 
 There is also a distinction relevant to your \(4/9\):
 
 > [!CAUTION]
-> You can prescribe an equal-probability climatological forecast even when the verification observations are not equally distributed. But its **expected RPS equals \(4/9\)** only when the verifying outcomes are also equally likely across the three categories.
+> Prescribe an equal-probability climatological forecast even when the verification observations are not equally distributed. But its **expected RPS equals \(4/9\)** only when the verifying outcomes are also equally likely across the three categories.
 
-For actual observed frequencies \(q*{\mathrm{below}},q*{\mathrm{near}},q\_{\mathrm{above}}\), the mean reference score is instead
+For actual observed frequencies
 
-\[
-\overline{RPS*{\mathrm{clim}}}
+```math
+q*{\mathrm{below}},q*{\mathrm{near}},q\_{\mathrm{above}}
+```
+
+, the mean reference score is instead
+
+```math
+\overline{RPS_{\mathrm{clim}}}
 =\frac59q*{\mathrm{below}}
 +\frac29q*{\mathrm{near}}
 +\frac59q*{\mathrm{above}}.
-\]
+```
 
 Setting each \(q=1/3\) gives \(4/9\). Your selected verification years need not satisfy that equality exactly, even when the thresholds were estimated correctly.
